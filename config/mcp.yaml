@@ -1,0 +1,36 @@
+# Servidores MCP (secc. 10). Todo deshabilitado hasta verificar cada servidor.
+# Solo los servidores de authorized_servers pueden conectarse.
+
+transports: [stdio, streamable_http]
+
+authorized_servers: []      # se llena servidor por servidor en la Fase 6
+
+servers:
+  duckduckgo:
+    enabled: false
+    transport: stdio
+    command: null           # servidor MCP de terceros: verificar antes de instalar
+  playwright:
+    enabled: false
+    transport: stdio
+    command: null
+  filesystem:
+    enabled: false
+    transport: stdio
+    command: null
+    allowed_paths: []
+  fetch:
+    enabled: false
+    transport: stdio
+    command: null
+  sqlite:
+    enabled: false
+    transport: stdio
+    command: null
+  github:
+    enabled: false
+    transport: stdio
+    command: null
+
+# Los resultados de herramientas y paginas web son datos NO confiables.
+untrusted_tool_output: true

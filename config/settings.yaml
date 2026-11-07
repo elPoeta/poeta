@@ -1,0 +1,22 @@
+# Configuracion general de P.O.E.T.A.
+# Las cadenas aceptan ${VAR} y ${VAR:-valor_por_defecto}; "~" se expande.
+
+project:
+  name: "P.O.E.T.A."
+  assistant_name: "POETA"
+  language: es
+
+paths:
+  ai_home: "${AI_HOME:-~/AI}"
+  models: "${AI_MODELS:-~/AI/models}"
+  voices: "${AI_VOICES:-~/AI/voices}"
+  output: "${AI_OUTPUT:-~/AI/output}"
+  cache: "${AI_CACHE:-~/AI/cache}"
+  poeta_home: "${POETA_HOME:-~/AI/poeta}"
+  llama_cpp: "${AI_HOME:-~/AI}/llama/llama.cpp"
+
+logging:
+  level: INFO
+  dir: logs            # relativo a la raiz del proyecto
+  max_bytes: 5242880   # 5 MB por archivo
+  backup_count: 5

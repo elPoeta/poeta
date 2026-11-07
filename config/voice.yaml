@@ -1,0 +1,28 @@
+# Sistema de voz (plan v1.1, secc. 8). null = por decidir tras la Fase 4.
+
+stt:
+  engine: faster-whisper
+  model: large-v3          # PROVISIONAL: medir large-v3-turbo y distil-large-v3
+  device: cpu
+  language: es
+  compute_type: int8       # respetar la configuracion previamente probada
+
+wake_word:
+  phrase: poeta
+  engine: openwakeword
+  model_path: null         # modelo personalizado a entrenar (no existe preentrenado)
+  threshold: null          # calibrar con mediciones
+
+tts:
+  engine: kokoro           # kokoro | piper | qwen3
+  resident: true           # mantener cargado en RAM (CPU)
+  kokoro:
+    runtime: onnx
+    device: cpu
+    voice: null            # fijar tras la prueba A/B
+    speed: 1.0
+  piper:
+    voice: null            # por ejemplo, una voz es_MX masculina
+  qwen3:
+    model: 0.6B
+    device: null

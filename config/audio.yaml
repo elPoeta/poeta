@@ -1,0 +1,10 @@
+# Audio Manager (secc. 8.4 y 8.6). Backend: PipeWire.
+
+backend: pipewire
+input_device: null          # null = predeterminado del sistema
+output_device: null
+sample_rate: 16000          # captura para STT / wake word
+vad:
+  enabled: true
+echo_cancel:
+  strategy: null            # aec (module-echo-cancel) | mute_during_playback; decidir en Fase 4

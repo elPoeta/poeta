@@ -1,0 +1,28 @@
+# Permisos y privacidad (secc. 7.1, 10.3, 12.2, 19).
+# INVARIANTE (validado al cargar): cloud.require_confirmation debe ser true.
+
+cloud:
+  require_confirmation: true        # cada operacion, nunca automatica
+  confirmation_shows:
+    - provider
+    - model
+    - operation_type
+    - text_to_send
+    - included_context
+    - attached_documents
+    - tool_results_included
+  never_send_automatically:
+    - private_memory
+    - local_files
+    - webcam_images
+    - mic_audio
+    - full_history
+
+risk_levels:
+  1: { description: "Consultas de lectura",                 policy: auto }
+  2: { description: "Navegacion y extraccion",              policy: auto }
+  3: { description: "Modificacion de archivos",             policy: confirm }
+  4: { description: "Acciones sensibles o irreversibles",   policy: confirm_explicit }
+
+never_automatic:
+  - privileged_operations

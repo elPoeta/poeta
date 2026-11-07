@@ -1,0 +1,42 @@
+# Catalogo de modelos. null = por completar tras auditar/medir (no inventar valores).
+# Los modelos locales NO se duplican: se referencian en el almacenamiento central.
+
+llm:
+  default: nemotron-bolt-e4b     # candidato inicial, no ganador definitivo
+
+  local:
+    nemotron-bolt-e4b:
+      provider: local
+      dir: llama/nvidia          # relativo a paths.models
+      file: null                 # completar con el nombre exacto del .gguf (Q4_K_M)
+      context: null              # medir
+      notes: "Candidato conversacional principal (secc. 6.2)"
+    qwen3.6-35b-a3b:
+      provider: local
+      dir: null
+      file: null
+    glm-4.7-flash:
+      provider: local
+      dir: null
+      file: null
+    gemma4-26b:
+      provider: local
+      dir: null
+      file: null
+    gpt-oss-20b:
+      provider: local
+      dir: null
+      file: null
+    lfm2.5-8b-a1b:
+      provider: local
+      dir: null
+      file: null
+
+  cloud:
+    nvidia:
+      provider: nvidia
+      model: null                # elegir manualmente desde el panel
+
+multimodal:
+  candidate: lfm3-omni-2b        # sin probar; verificar runtime antes de integrar
+  enabled: false

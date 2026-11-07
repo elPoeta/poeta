@@ -1,0 +1,13 @@
+# Vision y gestos (secc. 9). Valores provisionales; identificar dispositivos en la Fase 5.
+
+camera:
+  device: /dev/video0       # MJPEG hasta 2560x1440, YUYV 640x480
+  secondary_candidate: /dev/video2   # monocromo 640x360, posible sensor IR (sin verificar)
+  width: 640
+  height: 480
+  fps: null                 # medir uso de CPU antes de fijar
+  single_capture_instance: true      # una sola captura compartida
+
+gestures:
+  engine: mediapipe
+  sensitive_actions_require_more_than_gesture: true

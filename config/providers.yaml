@@ -1,0 +1,29 @@
+# Proveedores de modelos (API compatible con OpenAI).
+# INVARIANTES (validados al cargar): cloud_fallback debe ser false y el
+# proveedor por defecto debe existir. La seleccion es siempre manual.
+
+defaults:
+  provider: local
+  cloud_fallback: false
+
+providers:
+  local:
+    type: openai_compatible
+    base_url: http://127.0.0.1:8080/v1
+    api_key: local
+    enabled: true
+    cloud: false
+
+  nvidia:
+    type: openai_compatible
+    base_url: https://integrate.api.nvidia.com/v1
+    api_key_env: NVIDIA_API_KEY
+    enabled: true
+    cloud: true
+
+  openai:
+    type: openai_compatible
+    base_url: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+    enabled: false
+    cloud: true

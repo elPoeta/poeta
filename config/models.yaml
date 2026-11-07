@@ -8,8 +8,10 @@ llm:
     nemotron-bolt-e4b:
       provider: local
       dir: llama/nvidia          # relativo a paths.models
-      file: null                 # completar con el nombre exacto del .gguf (Q4_K_M)
-      context: null              # medir
+      file: Nemotron-3.5-Bolt-E4B-Q4_K_M.gguf
+      alias: nvidia-3.5-Bolt-4B  # nombre con que llama-server expone el modelo (-a); el router lo envia como "model"
+      context: 65536             # maximo del modelo
+      vram_mib_measured: 4526    # con los flags de abajo, nvidia-smi en reposo (2026-11-06); repetir bajo carga
       notes: "Candidato conversacional principal (secc. 6.2)"
     qwen3.6-35b-a3b:
       provider: local
@@ -35,7 +37,39 @@ llm:
   cloud:
     nvidia:
       provider: nvidia
-      model: null                # elegir manualmente desde el panel
+      model: null                # elegir manualmente: /provider nvidia MODELO en el chat
+
+# Parametros para lanzar llama-server (scripts/run_llama_server.py).
+# Reproducen el script que ya funciona en este equipo. null = no se pasa el flag.
+# El puerto debe coincidir con providers.local.base_url (lo valida una prueba).
+# OJO: valores como on/off van entre comillas; sin ellas YAML los convierte en true/false.
+llama_server:
+  host: 127.0.0.1                # tu script usa 0.0.0.0, que expone el servidor a toda la red; el router solo necesita 127.0.0.1
+  port: 8088
+  context: 65536                 # -c
+  gpu_layers: 999                # -ngl (todas las capas en GPU)
+  flash_attn: "on"               # --flash-attn
+  batch: 2048                    # -b
+  ubatch: 512                    # -ub
+  threads: 8                     # -t
+  parallel: 1                    # --parallel
+  reasoning: "on"                # --reasoning (ver nota de latencia en el plan: medir "off" para voz)
+  jinja: true                    # --jinja: plantilla de chat del modelo, necesaria para tool calling
+  extra_args:                    # copiados tal cual de tu script
+    - "--temp"
+    - "1.0"
+    - "--top-p"
+    - "0.95"
+    - "-lm"
+    - "none"
+    - "-lv"                      # verbosidad de logs alta; bajar si el log molesta
+    - "4"
+    - "--kv-unified"
+    - "--cache-idle-slots"
+    - "--cache-prompt"
+    - "--cache-reuse"
+    - "256"
+    - "--metrics"
 
 multimodal:
   candidate: lfm3-omni-2b        # sin probar; verificar runtime antes de integrar

@@ -13,7 +13,15 @@ paths:
   output: "${AI_OUTPUT:-~/AI/output}"
   cache: "${AI_CACHE:-~/AI/cache}"
   poeta_home: "${POETA_HOME:-~/AI/poeta}"
-  llama_cpp: "${AI_HOME:-~/AI}/llama/llama.cpp"
+  llama_cpp: "${AI_HOME:-~/AI/llama/llama.cpp}"
+
+agent:
+  max_history_messages: 40
+  system_prompt: >
+    Eres POETA, un asistente personal que se ejecuta de forma local en la computadora de tu usuario.
+    Respondes en español latinoamericano, con naturalidad y de forma breve, porque tus respuestas
+    se leen en voz alta. Evitas listas largas, tablas y bloques de código salvo que te los pidan.
+    Si no sabes algo, lo dices. No inventas resultados de herramientas ni acciones que no realizaste.
 
 logging:
   level: INFO

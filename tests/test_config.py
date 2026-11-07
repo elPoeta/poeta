@@ -75,6 +75,18 @@ def test_cloud_confirmation_cannot_be_disabled(cfg_dir):
         load_config(cfg_dir)
 
 
+def test_llama_server_port_matches_local_provider():
+    cfg = load_config()
+    port = cfg["models"]["llama_server"]["port"]
+    assert cfg["providers"]["providers"]["local"]["base_url"] == f"http://127.0.0.1:{port}/v1"
+
+
+def test_default_local_model_has_a_file():
+    cfg = load_config()
+    key = cfg["models"]["llm"]["default"]
+    assert cfg["models"]["llm"]["local"][key]["file"].endswith(".gguf")
+
+
 def test_mcp_servers_disabled_by_default():
     cfg = load_config()
     assert cfg["mcp"]["authorized_servers"] == []

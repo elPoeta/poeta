@@ -72,6 +72,16 @@ def main() -> int:
         else:
             record("WARN", "llama.cpp", f"{llama_dir} no existe")
 
+        llm = cfg["models"]["llm"]
+        key = llm["default"]
+        m = llm["local"].get(key) or {}
+        if m.get("file"):
+            mp = Path(paths["models"]) / (m.get("dir") or "") / m["file"]
+            record("OK" if mp.is_file() else "FAIL", f"modelo {key}",
+                   f"{mp}" + ("" if mp.is_file() else " (no existe)"))
+        else:
+            record("WARN", f"modelo {key}", "sin 'file' en models.yaml")
+
         free_gb = shutil.disk_usage(ROOT).free / 1e9
         record("OK" if free_gb > 20 else "WARN", "espacio libre", f"{free_gb:.0f} GB")
 

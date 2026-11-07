@@ -81,6 +81,24 @@ def _validate(cfg: dict[str, dict[str, Any]]) -> None:
     if cloud_perms.get("require_confirmation") is not True:
         raise ConfigError("permissions.cloud.require_confirmation debe ser true.")
 
+    name = (cfg["settings"].get("assistant") or {}).get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise ConfigError("settings.assistant.name debe ser un texto no vacio.")
+
+
+DEFAULT_SYSTEM_PROMPT = "Eres {assistant_name}, un asistente personal."
+
+
+def assistant_name(cfg: dict[str, dict[str, Any]]) -> str:
+    """Nombre del asistente segun settings.assistant.name."""
+    return cfg["settings"]["assistant"]["name"].strip()
+
+
+def system_prompt(cfg: dict[str, dict[str, Any]]) -> str:
+    """System prompt con {assistant_name} reemplazado. Usa replace (no format) para tolerar otras llaves."""
+    template = (cfg["settings"].get("agent") or {}).get("system_prompt") or DEFAULT_SYSTEM_PROMPT
+    return " ".join(template.split()).replace("{assistant_name}", assistant_name(cfg))
+
 
 def load_config(config_dir: str | Path | None = None) -> dict[str, dict[str, Any]]:
     """Carga todos los YAML, expande variables de entorno y valida invariantes."""

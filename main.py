@@ -10,7 +10,7 @@ import argparse
 import asyncio
 import sys
 
-from poeta.config import PROJECT_ROOT, ConfigError, load_config
+from poeta.config import PROJECT_ROOT, ConfigError, assistant_name, load_config, system_prompt
 from poeta.core import AgentCore
 from poeta.logging_setup import setup_logging
 from poeta.models import ModelRouter, RouterError, TransferRequest
@@ -48,12 +48,12 @@ async def chat(cfg: dict, provider: str | None, model: str | None) -> int:
     agent_cfg = cfg["settings"].get("agent", {})
     agent = AgentCore(
         router,
-        system_prompt=agent_cfg.get("system_prompt", "Eres POETA, un asistente personal."),
+        system_prompt=system_prompt(cfg),
         max_history=int(agent_cfg.get("max_history_messages", 40)),
     )
 
     st = router.status()
-    print(f"POETA listo. Proveedor: {st['provider']}  Modelo: {st['model']}")
+    print(f"{assistant_name(cfg)} listo. Proveedor: {st['provider']}  Modelo: {st['model']}")
     print("Escribe /help para ver los comandos.\n")
 
     while True:

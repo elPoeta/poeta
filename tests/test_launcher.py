@@ -52,8 +52,46 @@ def test_server_binds_to_loopback_by_default(launcher, cfg):
 
 
 def test_null_values_omit_the_flag(launcher, cfg):
-    cfg["models"]["llama_server"]["gpu_layers"] = None
+    cfg["models"]["llm"]["local"]["nemotron-bolt-e4b"]["server"]["gpu_layers"] = None
     assert "-ngl" not in launcher.build_command(cfg)
+
+
+def add_second_model(cfg, models_dir: Path):
+    (models_dir / "otro.gguf").touch()
+    cfg["models"]["llm"]["local"]["otro"] = {
+        "provider": "local", "dir": "", "file": "otro.gguf", "alias": "otro-alias", "context": 8192,
+        "server": {"gpu_layers": 20, "flash_attn": None, "jinja": False, "extra_args": ["--temp", "0.7"]},
+    }
+
+
+def test_flags_are_independent_per_model(launcher, cfg):
+    add_second_model(cfg, Path(cfg["settings"]["paths"]["models"]))
+    first = launcher.build_command(cfg)  # modelo por defecto
+    second = launcher.build_command(cfg, "otro")
+
+    assert pair(second, "-a") == "otro-alias" and pair(second, "-c") == "8192"
+    assert pair(second, "-ngl") == "20" and pair(second, "--temp") == "0.7"
+    for absent in ("--flash-attn", "--jinja", "--cache-reuse", "--metrics", "--parallel", "--reasoning", "-lv"):
+        assert absent not in second, f"{absent} se filtro desde otro modelo"
+    # el primero no cambio por existir el segundo
+    assert pair(first, "--temp") == "0.2" and pair(first, "-ngl") == "999"
+
+
+def test_model_without_server_block_is_rejected(launcher, cfg):
+    from poeta.config import ConfigError
+
+    local = cfg["models"]["llm"]["local"]
+    local["gemma4-26b"].update(dir="", file="x.gguf")
+    (Path(cfg["settings"]["paths"]["models"]) / "x.gguf").touch()
+    with pytest.raises(ConfigError, match="server"):
+        launcher.build_command(cfg, "gemma4-26b")
+
+
+def test_unknown_model_key_is_rejected(launcher, cfg):
+    from poeta.config import ConfigError
+
+    with pytest.raises(ConfigError, match="no existe"):
+        launcher.build_command(cfg, "inventado")
 
 
 def test_missing_model_file_is_reported(launcher, cfg):

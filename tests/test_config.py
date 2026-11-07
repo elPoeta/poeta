@@ -75,6 +75,39 @@ def test_cloud_confirmation_cannot_be_disabled(cfg_dir):
         load_config(cfg_dir)
 
 
+def test_assistant_name_defaults_to_poeta():
+    from poeta.config import assistant_name, system_prompt
+
+    cfg = load_config()
+    assert assistant_name(cfg) == "POETA"
+    assert system_prompt(cfg).startswith("Eres POETA, un asistente personal")
+    assert "{assistant_name}" not in system_prompt(cfg)
+
+
+def test_assistant_name_is_configurable(cfg_dir):
+    from poeta.config import assistant_name, system_prompt
+
+    edit(cfg_dir, "settings", lambda d: d["assistant"].update(name="  Atlas "))
+    cfg = load_config(cfg_dir)
+    assert assistant_name(cfg) == "Atlas"
+    prompt = system_prompt(cfg)
+    assert prompt.startswith("Eres Atlas,") and "POETA" not in prompt
+
+
+def test_custom_prompt_without_placeholder_and_with_other_braces(cfg_dir):
+    from poeta.config import system_prompt
+
+    edit(cfg_dir, "settings", lambda d: d["agent"].update(system_prompt='Responde en JSON {"a": 1}.'))
+    assert system_prompt(load_config(cfg_dir)) == 'Responde en JSON {"a": 1}.'
+
+
+@pytest.mark.parametrize("bad", ["", "   ", None, 5])
+def test_invalid_assistant_name_is_rejected(cfg_dir, bad):
+    edit(cfg_dir, "settings", lambda d: d["assistant"].update(name=bad))
+    with pytest.raises(ConfigError, match="assistant.name"):
+        load_config(cfg_dir)
+
+
 def test_llama_server_port_matches_local_provider():
     cfg = load_config()
     port = cfg["models"]["llama_server"]["port"]

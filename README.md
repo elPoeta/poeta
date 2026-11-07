@@ -18,6 +18,7 @@ python main.py             # carga y valida la configuracion
 
 ```bash
 python scripts/run_llama_server.py --dry-run   # revisa el comando; quita --dry-run para lanzarlo
+python scripts/run_llama_server.py --model CLAVE   # otro modelo de models.yaml (cada uno con su bloque `server`)
 python main.py chat                            # en otra terminal
 ```
 

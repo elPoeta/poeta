@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Lanza llama-server con el modelo local por defecto de config/models.yaml.
+"""Lanza llama-server con un modelo local de config/models.yaml.
 
-  python scripts/run_llama_server.py --dry-run   # solo imprime el comando
-  python scripts/run_llama_server.py             # lo ejecuta (reemplaza este proceso)
+  python scripts/run_llama_server.py --dry-run             # imprime el comando del modelo por defecto
+  python scripts/run_llama_server.py --model CLAVE         # otro modelo del catalogo
+  python scripts/run_llama_server.py                       # lo ejecuta (reemplaza este proceso)
 
-Los flags de config/models.yaml (llama_server) reproducen el script que ya funciona en este equipo.
+Los flags de cada modelo viven en su bloque `server` de models.yaml y son independientes entre modelos.
 Este lanzador es opcional: POETA solo necesita un llama-server escuchando en el puerto de
-providers.yaml y cuyo alias coincida con el de models.yaml.
+providers.yaml y cuyo alias coincida con el del modelo activo (llm.default).
 """
 
 from __future__ import annotations
@@ -23,9 +24,8 @@ sys.path.insert(0, str(ROOT))
 
 from poeta.config import ConfigError, load_config  # noqa: E402
 
-# clave en models.yaml -> flag de llama-server (se omite si el valor es null)
+# clave en el bloque `server` del modelo -> flag de llama-server (se omite si el valor es null)
 VALUE_FLAGS = (
-    ("context", "-c"),
     ("gpu_layers", "-ngl"),
     ("flash_attn", "--flash-attn"),
     ("batch", "-b"),
@@ -46,41 +46,50 @@ def find_binary(llama_dir: Path) -> Path:
     return found[0]
 
 
-def build_command(cfg: dict) -> list[str]:
-    key = cfg["models"]["llm"]["default"]
-    model = cfg["models"]["llm"]["local"][key]
+def build_command(cfg: dict, key: str | None = None) -> list[str]:
+    local = cfg["models"]["llm"]["local"]
+    key = key or cfg["models"]["llm"]["default"]
+    if key not in local:
+        raise ConfigError(f"El modelo '{key}' no existe en models.yaml (disponibles: {', '.join(local)}).")
+    model = local[key]
     if not model.get("file"):
         raise ConfigError(f"El modelo '{key}' no tiene 'file' definido en models.yaml.")
+    server = model.get("server")
+    if not server:
+        raise ConfigError(f"El modelo '{key}' no tiene bloque 'server' en models.yaml: define sus flags de llama-server.")
 
     paths = cfg["settings"]["paths"]
     model_path = Path(paths["models"]) / (model.get("dir") or "") / model["file"]
     if not model_path.is_file():
         raise FileNotFoundError(f"No existe el modelo: {model_path}")
 
-    srv = cfg["models"].get("llama_server", {})
+    common = cfg["models"].get("llama_server", {})
     cmd = [
         str(find_binary(Path(paths["llama_cpp"]))),
         "-m", str(model_path),
         "-a", model.get("alias") or key,
-        "--host", str(srv.get("host", "127.0.0.1")),
-        "--port", str(srv.get("port", 8088)),
+        "--host", str(common.get("host", "127.0.0.1")),
+        "--port", str(common.get("port", 8088)),
     ]
+    if model.get("context") is not None:
+        cmd += ["-c", str(model["context"])]
     for cfg_key, flag in VALUE_FLAGS:
-        if srv.get(cfg_key) is not None:
-            cmd += [flag, str(srv[cfg_key])]
-    if srv.get("jinja", True):
+        if server.get(cfg_key) is not None:
+            cmd += [flag, str(server[cfg_key])]
+    if server.get("jinja", True):
         cmd.append("--jinja")
-    cmd += [str(a) for a in srv.get("extra_args") or []]
+    cmd += [str(a) for a in server.get("extra_args") or []]
     return cmd
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--model", help="Clave del modelo en models.yaml (por defecto, llm.default)")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
     try:
-        cmd = build_command(load_config())
+        cmd = build_command(load_config(), args.model)
     except (ConfigError, FileNotFoundError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1

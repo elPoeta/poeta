@@ -1,5 +1,10 @@
 # Catalogo de modelos. null = por completar tras auditar/medir (no inventar valores).
 # Los modelos locales NO se duplican: se referencian en el almacenamiento central.
+#
+# Cada modelo local lleva su propio bloque `server` con los flags de llama-server.
+# Los flags son independientes por modelo: no se heredan ni se mezclan entre modelos.
+# Un modelo sin bloque `server` no puede lanzarse con scripts/run_llama_server.py.
+# OJO: valores como on/off van entre comillas; sin ellas YAML los convierte en true/false.
 
 llm:
   default: nemotron-bolt-e4b     # candidato inicial, no ganador definitivo
@@ -10,66 +15,69 @@ llm:
       dir: llama/nvidia          # relativo a paths.models
       file: Nemotron-3.5-Bolt-E4B-Q4_K_M.gguf
       alias: nvidia-3.5-Bolt-4B  # nombre con que llama-server expone el modelo (-a); el router lo envia como "model"
-      context: 65536             # maximo del modelo
-      vram_mib_measured: 4526    # con los flags de abajo, nvidia-smi en reposo (2026-11-06); repetir bajo carga
+      context: 65536             # -c; maximo del modelo
+      vram_mib_measured: 4556    # pico durante generacion con estos flags (2026-11-07); repetir con historial largo
       notes: "Candidato conversacional principal (secc. 6.2)"
+      server:                    # flags de llama-server, copiados del script que ya funciona; null = no se pasa
+        gpu_layers: 999          # -ngl
+        flash_attn: "on"         # --flash-attn
+        batch: 2048              # -b
+        ubatch: 512              # -ub
+        threads: 8               # -t
+        parallel: 2              # --parallel
+        reasoning: "on"          # --reasoning (medir "off" para voz: los tokens de razonamiento retrasan la primera palabra)
+        jinja: true              # --jinja: plantilla de chat del modelo, necesaria para tool calling
+        extra_args:
+          - "--temp"
+          - "0.2"
+          - "--top-p"
+          - "0.95"
+          - "-lm"
+          - "none"
+          - "-lv"                # verbosidad de logs alta; bajar si el log molesta
+          - "4"
+          - "--kv-unified"
+          - "--cache-idle-slots"
+          - "--cache-prompt"
+          - "--cache-reuse"
+          - "256"
+          - "--metrics"
     qwen3.6-35b-a3b:
       provider: local
       dir: null
       file: null
+      server: null
     glm-4.7-flash:
       provider: local
       dir: null
       file: null
+      server: null
     gemma4-26b:
       provider: local
       dir: null
       file: null
+      server: null
     gpt-oss-20b:
       provider: local
       dir: null
       file: null
+      server: null
     lfm2.5-8b-a1b:
       provider: local
       dir: null
       file: null
+      server: null
 
   cloud:
     nvidia:
       provider: nvidia
       model: null                # elegir manualmente: /provider nvidia MODELO en el chat
 
-# Parametros para lanzar llama-server (scripts/run_llama_server.py).
-# Reproducen el script que ya funciona en este equipo. null = no se pasa el flag.
+# Parametros comunes a todos los modelos locales (scripts/run_llama_server.py).
 # El puerto debe coincidir con providers.local.base_url (lo valida una prueba).
-# OJO: valores como on/off van entre comillas; sin ellas YAML los convierte en true/false.
 llama_server:
   host: 127.0.0.1                # tu script usa 0.0.0.0, que expone el servidor a toda la red; el router solo necesita 127.0.0.1
   port: 8088
-  context: 65536                 # -c
-  gpu_layers: 999                # -ngl (todas las capas en GPU)
-  flash_attn: "on"               # --flash-attn
-  batch: 2048                    # -b
-  ubatch: 512                    # -ub
-  threads: 8                     # -t
-  parallel: 1                    # --parallel
-  reasoning: "on"                # --reasoning (ver nota de latencia en el plan: medir "off" para voz)
-  jinja: true                    # --jinja: plantilla de chat del modelo, necesaria para tool calling
-  extra_args:                    # copiados tal cual de tu script
-    - "--temp"
-    - "1.0"
-    - "--top-p"
-    - "0.95"
-    - "-lm"
-    - "none"
-    - "-lv"                      # verbosidad de logs alta; bajar si el log molesta
-    - "4"
-    - "--kv-unified"
-    - "--cache-idle-slots"
-    - "--cache-prompt"
-    - "--cache-reuse"
-    - "256"
-    - "--metrics"
 
 multimodal:
   candidate: lfm3-omni-2b        # sin probar; verificar runtime antes de integrar

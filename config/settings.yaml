@@ -2,9 +2,13 @@
 # Las cadenas aceptan ${VAR} y ${VAR:-valor_por_defecto}; "~" se expande.
 
 project:
-  name: "P.O.E.T.A."
-  assistant_name: "POETA"
+  name: "P.O.E.T.A."          # nombre del proyecto; no cambia
   language: es
+
+assistant:
+  name: "POETA"               # como se llama el asistente: aparece en el chat y en el system prompt.
+                              # NO cambia la palabra de activacion: esa vive en voice.yaml (wake_word)
+                              # y requiere un modelo entrenado para cada palabra.
 
 paths:
   ai_home: "${AI_HOME:-~/AI}"
@@ -14,6 +18,14 @@ paths:
   cache: "${AI_CACHE:-~/AI/cache}"
   poeta_home: "${POETA_HOME:-~/AI/poeta}"
   llama_cpp: "${AI_HOME:-~/AI}/llama/llama.cpp"
+
+agent:
+  max_history_messages: 40
+  system_prompt: >           # {assistant_name} se reemplaza por assistant.name
+    Eres {assistant_name}, un asistente personal que se ejecuta de forma local en la computadora de tu usuario.
+    Respondes en español latinoamericano, con naturalidad y de forma breve, porque tus respuestas
+    se leen en voz alta. Evitas listas largas, tablas y bloques de código salvo que te los pidan.
+    Si no sabes algo, lo dices. No inventas resultados de herramientas ni acciones que no realizaste.
 
 logging:
   level: INFO

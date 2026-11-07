@@ -14,6 +14,18 @@ python scripts/doctor.py   # diagnostico del entorno (solo lectura)
 python main.py             # carga y valida la configuracion
 ```
 
+## Fase 1: chat con el modelo local
+
+```bash
+python scripts/run_llama_server.py --dry-run   # revisa el comando; quita --dry-run para lanzarlo
+python scripts/run_llama_server.py --model CLAVE   # otro modelo de models.yaml (cada uno con su bloque `server`)
+python main.py chat                            # en otra terminal
+```
+
+Comandos del chat: `/status`, `/provider NOMBRE [MODELO]`, `/model NOMBRE`, `/reset`, `/quit`.
+Para NVIDIA: exporta `NVIDIA_API_KEY`, y usa `/provider nvidia MODELO`. Antes de enviar nada se muestra el contenido exacto y se pide confirmacion en cada operacion.
+Nunca hay cambio automatico de proveedor: si el local falla, el error se muestra y se queda ahi.
+
 ## Estructura
 
 - `config/` — YAML (settings, providers, models, voice, vision, audio, mcp, permissions). `null` significa "por decidir tras medir".

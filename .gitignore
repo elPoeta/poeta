@@ -10,3 +10,5 @@ workspace/*
 .env
 *.db
 *.sqlite
+data/*
+!data/.gitkeep

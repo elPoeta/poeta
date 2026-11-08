@@ -45,6 +45,29 @@ Si la cadena esta rota, `main.py chat` se niega a arrancar hasta que muevas el a
 
 Limites: la cadena de hashes detecta ediciones y borrados intermedios, no protege contra quien reescriba todo el archivo ni detecta que se trunquen las ultimas entradas. El gestor decide sobre lo que se le pide; que las herramientas lo consulten antes de actuar es responsabilidad de las fases 6 y 7.
 
+## Fase 3: memoria
+
+SQLite + FTS5 en `data/memory.db` (privada, 0600; el agente no puede leerla ni escribirla). Independiente del modelo: una conversacion sigue siendo una aunque cambies de modelo o de proveedor.
+
+- **Se guarda solo:** cada intercambio de chat (`save_conversations`). Un turno que falla sin texto no se guarda; uno cortado a mitad se guarda como parcial.
+- **Se guarda por orden tuya:** notas (`/remember`) y preferencias (`/prefer clave=valor`). El modelo no decide que recordar.
+- **Se usa:** antes de cada turno se buscan notas, preferencias y fragmentos de conversaciones anteriores relacionados con lo que escribes, y se agregan al prompt del sistema como *datos, no instrucciones*. No se guardan en el historial.
+- **Nunca a la nube por defecto** (`memory.context.inject_into_cloud: false`). La conversacion de un turno cloud se guarda igual, pero localmente.
+- **Retencion** (`retention_days`) y expiracion por nota: se aplican al arrancar.
+
+```bash
+python main.py chat --continue      # retoma la ultima conversacion
+/conversations   /resume ID         # elegir otra
+/remember TEXTO  /memories [CONSULTA]  /forget ID
+/prefer CLAVE=VALOR  /unprefer CLAVE
+/incognito                          # esta sesion no se guarda (la memoria existente se sigue usando)
+python main.py memory stats | export ARCHIVO.json | wipe
+```
+
+Borrado: `/forget`, `/unprefer`, la expiracion y `wipe` sobrescriben las paginas (`secure_delete`) y truncan el WAL, y se comprueba sobre los bytes crudos del archivo. En un SSD no hay garantia de borrado fisico: para eso, cifrado de disco (LUKS).
+
+Limites actuales: la busqueda es por palabras (FTS5), no por significado: una nota se encuentra si comparte palabras con lo que escribes. La base **no esta cifrada** por si misma. La busqueda vectorial y la consolidacion de recuerdos quedan para una etapa posterior (`poeta/memory/embeddings.py` solo define la interfaz).
+
 ## Estructura
 
 - `config/` — YAML (settings, providers, models, voice, vision, audio, mcp, permissions). `null` significa "por decidir tras medir".

@@ -50,7 +50,7 @@ actions:
 file_access:
   allowed_dirs: [workspace]       # unica zona donde el agente puede leer o escribir; agrega carpetas aqui
   auto_create_dirs: [workspace]   # crear documentos nuevos aqui no pide confirmacion
-  protected: [config, logs, .env] # nunca accesibles para el agente, ni siquiera para lectura
+  protected: [config, logs, data, .env] # nunca accesibles para el agente, ni siquiera para lectura (data = memoria)
 
 # Solo estos comandos (por nombre, sin ruta) pueden llegar a confirmacion; el resto se deniega.
 commands:

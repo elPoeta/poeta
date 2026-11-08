@@ -22,12 +22,11 @@ import argparse
 import csv
 import resource
 import subprocess
+import statistics
 import sys
 import time
 import wave
 from pathlib import Path
-
-import numpy as np
 
 # Frases de uso real: cortas, números, fechas, nombres propios, anglicismos, largas.
 PHRASES = [
@@ -53,7 +52,9 @@ PHRASES = [
 ]
 
 
-def write_wav(path: Path, samples: np.ndarray, sample_rate: int) -> None:
+def write_wav(path: Path, samples, sample_rate: int) -> None:
+    import numpy as np  # solo Kokoro lo necesita
+
     samples = np.asarray(samples)
     if samples.dtype != np.int16:
         samples = np.clip(samples, -1.0, 1.0)
@@ -77,7 +78,15 @@ def rss_mb() -> float:
 
 class KokoroRunner:
     def __init__(self, model: str, voices: str, voice: str, speed: float, lang: str):
-        from kokoro_onnx import Kokoro  # import perezoso
+        try:
+            import numpy  # noqa: F401
+            from kokoro_onnx import Kokoro  # import perezoso
+        except ImportError as e:
+            raise SystemExit(
+                f"Falta una dependencia para Kokoro ({e.name}). Instala con:\n"
+                "  uv pip install kokoro-onnx numpy\n"
+                "y descarga kokoro-v1.0.onnx y voices-v1.0.bin (ver README, seccion voz)."
+            )
 
         self.engine = Kokoro(model, voices)
         self.voice = voice
@@ -95,6 +104,9 @@ class KokoroRunner:
 
 class PiperRunner:
     def __init__(self, model: str, binary: str, length_scale: float):
+        import shutil
+        if shutil.which(binary) is None:
+            raise SystemExit(f"No se encontro el binario '{binary}'. Instala piper-tts (uv pip install piper-tts) o usa --binary RUTA.")
         self.model = model
         self.binary = binary
         self.length_scale = length_scale
@@ -179,12 +191,14 @@ def main() -> int:
         w.writeheader()
         w.writerows(rows)
 
-    synth_times = np.array([r["sintesis_s"] for r in rows])
-    rtfs = np.array([r["rtf"] for r in rows])
+    synth_times = [r["sintesis_s"] for r in rows]
+    rtfs = [r["rtf"] for r in rows]
+    srt = sorted(synth_times)
+    p95 = srt[min(len(srt) - 1, int(round(0.95 * (len(srt) - 1))))]
     print("\n=== Resumen:", label, "===")
     print(f"Carga del motor:          {load_s:.2f} s")
-    print(f"Síntesis media por frase: {synth_times.mean():.2f} s (p95 {np.percentile(synth_times, 95):.2f} s)")
-    print(f"RTF medio:                {rtfs.mean():.3f} (menor que 1 = más rápido que tiempo real)")
+    print(f"Síntesis media por frase: {statistics.mean(synth_times):.2f} s (p95 {p95:.2f} s)")
+    print(f"RTF medio:                {statistics.mean(rtfs):.3f} (menor que 1 = más rápido que tiempo real)")
     print(f"Memoria máxima (RSS):     {rss_mb():.0f} MB")
     print(f"WAV y CSV en:             {out_dir}")
     print("\nSiguiente paso: escuchar a ciegas y puntuar naturalidad, acento y pronunciación.")

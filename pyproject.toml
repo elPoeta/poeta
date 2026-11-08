@@ -12,6 +12,19 @@ dependencies = [
 dev = [
     "pytest>=8.0",
 ]
+# Fase 4: voz. 'cuda' aporta las librerias CUDA 12 que CTranslate2 necesita
+# aunque el sistema tenga otro toolkit (ver poeta/voice/cuda_env.py).
+voice = [
+    "faster-whisper>=1.0.3",
+    "numpy>=1.26",
+    "sounddevice>=0.4.7",
+    "kokoro-onnx",
+]
+cuda = [
+    "nvidia-cublas-cu12>=12.9; platform_system == 'Linux'",
+    "nvidia-cudnn-cu12>=9.24; platform_system == 'Linux'",
+    "nvidia-cuda-runtime-cu12>=12.9; platform_system == 'Linux'",
+]
 
 [build-system]
 requires = ["setuptools>=68"]

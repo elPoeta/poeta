@@ -3,20 +3,22 @@
 Garantias (plan secc. 5.1, 7.1 y 19):
 - La seleccion es siempre manual: no hay sustitucion automatica entre proveedores.
 - Si el proveedor falla, el error se propaga; nunca se reintenta contra otro proveedor.
-- Un proveedor cloud no recibe nada sin autorizacion especifica de la operacion.
-  En la Fase 1 la autorizacion es un callback minimo; la Fase 2 lo reemplaza por el Permission Manager.
+- Un proveedor cloud no recibe nada sin autorizacion especifica de la operacion, decidida por el
+  Permission Manager. Sin manager o sin interfaz de confirmacion, se deniega.
+- Lo que se muestra al usuario es exactamente lo que se envia: el contenido se copia antes de pedir
+  la autorizacion y se envia esa copia, aunque el original cambie mientras se espera.
 """
 
 from __future__ import annotations
 
-import inspect
+import copy
 import logging
 import os
 import time
-from dataclasses import dataclass
-from typing import Any, AsyncIterator, Awaitable, Callable
+from typing import Any, AsyncIterator
 
 from poeta.providers import Chunk, MissingCredentials, OpenAICompatibleProvider, Provider
+from poeta.security import ActionRequest, Decision, PermissionManager, chat_payload_summary
 
 log = logging.getLogger("poeta.router")
 
@@ -37,23 +39,10 @@ class CloudNotAuthorized(RouterError):
     """La transferencia a un proveedor cloud no fue autorizada."""
 
 
-@dataclass
-class TransferRequest:
-    """Lo que se mostrara al usuario antes de enviar datos a un proveedor externo."""
-
-    provider: str
-    model: str
-    operation: str
-    messages: list[dict[str, Any]]
-    tools: list[dict[str, Any]] | None
-
-
-Authorizer = Callable[[TransferRequest], "bool | Awaitable[bool]"]
-
-
 class ModelRouter:
-    def __init__(self, cfg: dict[str, dict[str, Any]], authorizer: Authorizer | None = None) -> None:
-        self._authorizer = authorizer
+    def __init__(self, cfg: dict[str, dict[str, Any]], permissions: PermissionManager | None = None) -> None:
+        # Sin manager explicito se crea uno sin confirmador: todo lo que requiera confirmacion se deniega.
+        self._permissions = permissions or PermissionManager(cfg)
         self._provider_cfg: dict[str, dict[str, Any]] = cfg["providers"]["providers"]
         llm = cfg["models"].get("llm", {})
         default_key: str | None = llm.get("default")
@@ -116,22 +105,27 @@ class ModelRouter:
 
     # -- inferencia -----------------------------------------------------------
 
-    async def _authorize(self, req: TransferRequest) -> None:
-        if self._authorizer is None:
-            allowed = False
-        else:
-            result = self._authorizer(req)
-            allowed = await result if inspect.isawaitable(result) else bool(result)
-        if not allowed:
-            log.warning(
-                "transferencia cloud NO autorizada",
-                extra={"provider": req.provider, "model": req.model, "operation": req.operation},
-            )
-            raise CloudNotAuthorized(f"Transferencia a '{req.provider}' no autorizada.")
-        log.info(
-            "transferencia cloud autorizada",
-            extra={"provider": req.provider, "model": req.model, "operation": req.operation},
+    async def _authorize_cloud(
+        self,
+        provider: str,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        params: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]] | None, dict[str, Any], Decision]:
+        """Pide autorizacion y devuelve la copia exacta que se mostro, que es la que se debe enviar."""
+        snapshot = copy.deepcopy({"messages": messages, "tools": tools, "params": params})
+        summary = chat_payload_summary(snapshot["messages"], snapshot["tools"], snapshot["params"])
+        request = ActionRequest(
+            kind="cloud_transfer",
+            description=f"Enviar la conversacion a {provider} ({model})",
+            details={"provider": provider, "model": model, "operation": "chat", **summary},
+            payload=snapshot,
         )
+        decision = await self._permissions.check(request)
+        if not decision.allowed:
+            raise CloudNotAuthorized(f"Transferencia a '{provider}' no autorizada: {decision.reason}.")
+        return snapshot["messages"], snapshot["tools"], snapshot["params"], decision
 
     async def stream_chat(
         self,
@@ -143,15 +137,22 @@ class ModelRouter:
         if self._model is None:
             raise ModelNotSelected(f"Selecciona un modelo para '{provider.name}' (router.select(model=...)).")
 
+        decision: Decision | None = None
         if provider.is_cloud:
             if not provider.api_key:
                 key_env = self._provider_cfg[provider.name].get("api_key_env")
-                raise MissingCredentials(f"Falta la variable de entorno {key_env} para '{provider.name}'.")
-            await self._authorize(TransferRequest(provider.name, self._model, "chat", messages, tools))
+                raise MissingCredentials(
+                    f"Falta la variable {key_env} para '{provider.name}'. "
+                    f"Definela en el entorno o en el archivo .env de la raiz del proyecto y reinicia."
+                )
+            messages, tools, params, decision = await self._authorize_cloud(
+                provider.name, self._model, messages, tools, params
+            )
 
         t0 = time.perf_counter()
         first: float | None = None
         status = "ok"
+        error: str | None = None
         try:
             async for chunk in provider.stream_chat(messages, self._model, tools=tools, **params):
                 if first is None and (chunk.text or chunk.tool_calls):
@@ -160,10 +161,12 @@ class ModelRouter:
         except GeneratorExit:
             status = "interrumpido"
             raise
-        except Exception:
+        except Exception as exc:
             status = "error"
+            error = type(exc).__name__
             raise
         finally:
+            total = round(time.perf_counter() - t0, 3)
             log.info(
                 "chat finalizado",
                 extra={
@@ -171,6 +174,20 @@ class ModelRouter:
                     "model": self._model,
                     "status": status,
                     "first_token_s": round(first, 3) if first is not None else None,
-                    "total_s": round(time.perf_counter() - t0, 3),
+                    "total_s": total,
                 },
             )
+            if decision is not None and self._permissions.audit is not None:
+                try:
+                    self._permissions.audit.record(
+                        "cloud_transfer_result",
+                        request_id=decision.request_id,
+                        digest=decision.digest,
+                        provider=provider.name,
+                        model=self._model,
+                        status=status,
+                        error=error,
+                        total_s=total,
+                    )
+                except Exception:  # noqa: BLE001 - el resultado ya ocurrio; no se oculta la respuesta
+                    log.exception("no se pudo registrar el resultado de la transferencia")

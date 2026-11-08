@@ -71,7 +71,7 @@ llm:
   cloud:
     nvidia:
       provider: nvidia
-      model: null                # elegir manualmente: /provider nvidia MODELO en el chat
+      model: nvidia/nemotron-3.5-super-vl-120b-a12b               # elegir manualmente: /provider nvidia MODELO en el chat
 
 # Parametros comunes a todos los modelos locales (scripts/run_llama_server.py).
 # El puerto debe coincidir con providers.local.base_url (lo valida una prueba).

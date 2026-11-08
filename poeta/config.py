@@ -15,6 +15,9 @@ from typing import Any
 
 import yaml
 
+from poeta.security.permissions import PermissionConfigError
+from poeta.security.permissions import validate_config as validate_permissions
+
 CONFIG_FILES = (
     "settings",
     "providers",
@@ -80,6 +83,11 @@ def _validate(cfg: dict[str, dict[str, Any]]) -> None:
     cloud_perms = (cfg["permissions"].get("cloud") or {})
     if cloud_perms.get("require_confirmation") is not True:
         raise ConfigError("permissions.cloud.require_confirmation debe ser true.")
+
+    try:
+        validate_permissions(cfg["permissions"])
+    except PermissionConfigError as exc:
+        raise ConfigError(f"permissions.yaml: {exc}") from exc
 
     name = (cfg["settings"].get("assistant") or {}).get("name")
     if not isinstance(name, str) or not name.strip():

@@ -4,7 +4,6 @@ from .router import (
     ModelRouter,
     ProviderDisabled,
     RouterError,
-    TransferRequest,
 )
 
 __all__ = [
@@ -13,5 +12,4 @@ __all__ = [
     "ModelRouter",
     "ProviderDisabled",
     "RouterError",
-    "TransferRequest",
 ]

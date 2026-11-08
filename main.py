@@ -1,20 +1,25 @@
 """Punto de entrada de P.O.E.T.A.
 
-  python main.py          Carga y valida la configuracion.
-  python main.py chat     Chat de texto en streaming (Fase 1).
+  python main.py                      Carga y valida la configuracion.
+  python main.py chat                 Chat de texto en streaming.
+  python main.py audit [--verify]     Muestra o verifica el registro de auditoria.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import sys
 
 from poeta.config import PROJECT_ROOT, ConfigError, assistant_name, load_config, system_prompt
 from poeta.core import AgentCore
+from poeta.envfile import load_env_file
+from poeta.interface import cli_confirmer
 from poeta.logging_setup import setup_logging
-from poeta.models import ModelRouter, RouterError, TransferRequest
+from poeta.models import ModelRouter, RouterError
 from poeta.providers import ProviderError
+from poeta.security import AuditError, AuditLog, PermissionManager, audit_path, read_tail, verify_chain
 
 HELP = """Comandos:
   /status                  Proveedor y modelo activos
@@ -24,21 +29,14 @@ HELP = """Comandos:
   /quit                    Salir"""
 
 
-async def cli_authorizer(req: TransferRequest) -> bool:
-    """Autorizacion minima de la Fase 1: muestra exactamente lo que se enviaria."""
-    print("\n--- TRANSFERENCIA A PROVEEDOR EXTERNO ---")
-    print(f"Proveedor: {req.provider}   Modelo: {req.model}   Operacion: {req.operation}")
-    print("Se enviara:")
-    for m in req.messages:
-        print(f"  [{m['role']}] {m.get('content', '')}")
-    if req.tools:
-        print(f"  (+ {len(req.tools)} herramientas)")
-    answer = await asyncio.to_thread(input, "Enviar esto al proveedor externo? [s/N] ")
-    return answer.strip().lower() in {"s", "si", "sí", "y", "yes"}
-
-
 async def chat(cfg: dict, provider: str | None, model: str | None) -> int:
-    router = ModelRouter(cfg, authorizer=cli_authorizer)
+    try:
+        audit = AuditLog.from_config(cfg, PROJECT_ROOT)
+    except AuditError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    permissions = PermissionManager(cfg, confirmer=cli_confirmer, audit=audit, root=PROJECT_ROOT)
+    router = ModelRouter(cfg, permissions=permissions)
     try:
         router.select(provider, model)
     except RouterError as exc:
@@ -100,14 +98,38 @@ async def chat(cfg: dict, provider: str | None, model: str | None) -> int:
             print(f"\nError: {exc}\n")
 
 
+def audit_cmd(cfg: dict, verify: bool, tail: int) -> int:
+    path = audit_path(cfg, PROJECT_ROOT)
+    if verify:
+        ok, n, err = verify_chain(path)
+        if ok:
+            print(f"Cadena integra: {n} eventos verificados ({path}).")
+            return 0
+        print(f"CADENA ROTA tras {n} eventos verificados: {err}", file=sys.stderr)
+        return 1
+    entries = read_tail(path, tail)
+    if not entries:
+        print("Sin eventos registrados.")
+        return 0
+    for e in entries:
+        rest = {k: v for k, v in e.items() if k not in {"seq", "ts", "event", "prev", "hash"}}
+        summary = json.dumps(rest, ensure_ascii=False)
+        print(f"{e.get('seq', '?'):>5} {str(e.get('ts', ''))[:19]} {e.get('event', ''):<22} {summary[:160]}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="poeta")
     sub = parser.add_subparsers(dest="command")
     chat_p = sub.add_parser("chat", help="Chat de texto en streaming")
     chat_p.add_argument("--provider", help="Proveedor (por defecto, el de providers.yaml)")
     chat_p.add_argument("--model", help="Modelo")
+    audit_p = sub.add_parser("audit", help="Registro de auditoria")
+    audit_p.add_argument("--verify", action="store_true", help="Verificar la integridad de la cadena de hashes")
+    audit_p.add_argument("--tail", type=int, default=20, help="Cuantos eventos mostrar (por defecto 20)")
     args = parser.parse_args()
 
+    env = load_env_file(PROJECT_ROOT / ".env")  # antes de load_config: las rutas pueden usar variables del .env
     try:
         cfg = load_config()
     except ConfigError as exc:
@@ -115,9 +137,19 @@ def main() -> int:
         return 1
 
     log = setup_logging(cfg, PROJECT_ROOT)
+    if env.found:
+        log.info("archivo .env cargado", extra={"variables": env.loaded, "ya_definidas_en_el_shell": env.kept_existing})
+        if env.error:
+            log.warning("no se pudo leer .env", extra={"error": env.error})
+        if env.malformed_lines:
+            log.warning(".env: lineas mal formadas omitidas", extra={"lineas": env.malformed_lines})
+        if env.insecure_permissions:
+            log.warning(".env es legible por otros usuarios; protegelo con: chmod 600 .env")
 
     if args.command == "chat":
         return asyncio.run(chat(cfg, args.provider, args.model))
+    if args.command == "audit":
+        return audit_cmd(cfg, args.verify, args.tail)
 
     defaults = cfg["providers"]["defaults"]
     log.info(

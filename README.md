@@ -84,3 +84,13 @@ Limites actuales: la busqueda es por palabras (FTS5), no por significado: una no
 - `permissions.cloud.require_confirmation` siempre `true`.
 
 Las claves cloud van en el gestor de secretos del sistema o, en su defecto, en `.env` (ignorado por git).
+
+## Fase 4 (en curso): voz
+
+Instalar extras de voz (faster-whisper, numpy, sounddevice, kokoro-onnx) y las librerías CUDA 12 que necesita CTranslate2:
+
+    uv pip install -e '.[voice,cuda]'
+
+- `poeta/voice/stt.py`: transcriptor local con la configuración probada en vozboard (beam 5, VAD 500 ms, español, pesos en `$AI_MODELS/whisper`).
+- `python scripts/stt_benchmark.py --audio-dir ~/AI/output/vozboard/audio --combo large-v3:cuda:float16 --combo large-v3-turbo:cuda:int8_float16 --combo large-v3-turbo:cpu:int8`: compara modelos y dispositivos (latencia, WER si hay `.txt` de referencia junto al audio, VRAM). Medir con el servidor del LLM encendido.
+- `python scripts/tts_benchmark.py kokoro|piper ...`: A/B de voces (requiere `kokoro-onnx` o `piper-tts`).

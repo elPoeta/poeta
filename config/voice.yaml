@@ -2,10 +2,17 @@
 
 stt:
   engine: faster-whisper
-  model: large-v3          # PROVISIONAL: medir large-v3-turbo y distil-large-v3
-  device: cpu
+  # Elegido con scripts/stt_benchmark.py (ThinkPad P16, 8 audios): 0,23 s por frase, +1066 MiB de VRAM.
+  # large-v3 fp16 daba 0,42 s pero +3865 MiB (no entra junto al LLM de 4,5 GB);
+  # turbo en CPU: 3,4 s; distil-large-v3 es solo ingles (transcribio en ingles).
+  model: large-v3-turbo
+  device: cuda
+  compute_type: int8_float16  # null = automatico (int8 en cpu, float16 en cuda)
   language: es
-  compute_type: int8       # respetar la configuracion previamente probada
+  beam_size: 5
+  vad_filter: true
+  min_silence_duration_ms: 500
+  download_root: null      # null = <paths.models>/whisper (igual que vozboard)
 
 wake_word:
   phrase: poeta

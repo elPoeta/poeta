@@ -27,6 +27,7 @@ CONFIG_FILES = (
     "audio",
     "mcp",
     "permissions",
+    "memory",
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -88,6 +89,17 @@ def _validate(cfg: dict[str, dict[str, Any]]) -> None:
         validate_permissions(cfg["permissions"])
     except PermissionConfigError as exc:
         raise ConfigError(f"permissions.yaml: {exc}") from exc
+
+    mem = cfg["memory"]
+    if not isinstance(mem.get("db_path"), str) or not mem["db_path"].strip():
+        raise ConfigError("memory.db_path debe ser un texto no vacio.")
+    for key in ("max_chars", "max_items", "past_messages"):
+        value = (mem.get("context") or {}).get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value < (1 if key == "max_chars" else 0):
+            raise ConfigError(f"memory.context.{key} debe ser un entero {'positivo' if key == 'max_chars' else '>= 0'}.")
+    for key, days in (mem.get("retention_days") or {}).items():
+        if days is not None and (isinstance(days, bool) or not isinstance(days, int) or days < 1):
+            raise ConfigError(f"memory.retention_days.{key} debe ser null o un entero positivo (dias).")
 
     name = (cfg["settings"].get("assistant") or {}).get("name")
     if not isinstance(name, str) or not name.strip():

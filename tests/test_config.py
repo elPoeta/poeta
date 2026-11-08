@@ -108,6 +108,27 @@ def test_invalid_assistant_name_is_rejected(cfg_dir, bad):
         load_config(cfg_dir)
 
 
+def test_memory_db_is_protected_from_the_agent():
+    assert "data" in load_config()["permissions"]["file_access"]["protected"]
+
+
+@pytest.mark.parametrize(
+    "mutation, expected",
+    [
+        (lambda d: d.update(db_path=""), "memory.db_path"),
+        (lambda d: d["context"].update(max_chars=0), "max_chars"),
+        (lambda d: d["context"].update(max_items="seis"), "max_items"),
+        (lambda d: d["context"].update(past_messages=-1), "past_messages"),
+        (lambda d: d["retention_days"].update(messages=0), "retention_days.messages"),
+        (lambda d: d["retention_days"].update(episodic=True), "retention_days.episodic"),
+    ],
+)
+def test_invalid_memory_config_is_rejected(cfg_dir, mutation, expected):
+    edit(cfg_dir, "memory", mutation)
+    with pytest.raises(ConfigError, match=expected):
+        load_config(cfg_dir)
+
+
 def test_llama_server_port_matches_local_provider():
     cfg = load_config()
     port = cfg["models"]["llama_server"]["port"]

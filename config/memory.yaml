@@ -1,0 +1,26 @@
+# Memoria persistente (plan secc. 11). SQLite + FTS5, independiente del modelo y del proveedor.
+# La base vive en data/, que el agente no puede leer ni escribir (permissions.yaml, file_access.protected).
+
+enabled: true
+db_path: data/memory.db            # relativo a la raiz del proyecto
+
+save_conversations: true           # guarda cada intercambio; /incognito lo desactiva durante la sesion
+resume_last_messages: 20           # mensajes que se recuperan al retomar una conversacion (--continue, /resume)
+
+# Cuanto se conserva. null = para siempre. Se aplica al arrancar.
+retention_days:
+  messages: null
+  episodic: null
+  tool_log: null
+
+# Recuerdos que se agregan al prompt del sistema segun lo que escribas. Son datos, no instrucciones.
+context:
+  inject: true
+  inject_into_cloud: false         # false: la memoria NUNCA viaja a un proveedor cloud (plan secc. 7.1)
+  max_chars: 2000                  # tope del bloque de memoria
+  max_items: 6                     # notas y eventos
+  past_messages: 3                 # fragmentos de conversaciones anteriores
+
+# Reservado para la busqueda vectorial (etapa posterior). Hoy solo se usa FTS5.
+embeddings:
+  engine: null

@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import socket
+import sqlite3
 import sys
 import urllib.parse
 import urllib.request
@@ -22,6 +23,7 @@ sys.path.insert(0, str(ROOT))
 
 from poeta.config import ConfigError, load_config  # noqa: E402
 from poeta.envfile import load_env_file  # noqa: E402
+from poeta.memory import MemoryStore, MemoryStoreError, memory_path  # noqa: E402
 from poeta.security import audit_path, verify_chain  # noqa: E402
 
 results: list[tuple[str, str, str]] = []
@@ -55,6 +57,36 @@ def check_server_port(base_url: str) -> None:
         record("OK", f"servidor :{port}", f"responde como API OpenAI; modelos: {ids}")
     except Exception:
         record("WARN", f"puerto {port}", "ocupado por otro servicio (no responde como API OpenAI). Ver: ss -ltnp | grep :" + str(port))
+
+
+def check_memory(cfg: dict) -> None:
+    """Solo lee: no crea la base si no existe."""
+    if not cfg["memory"].get("enabled", True):
+        record("OK", "memoria", "deshabilitada en memory.yaml")
+        return
+    try:
+        sqlite3.connect(":memory:").execute("CREATE VIRTUAL TABLE t USING fts5(c)")
+    except sqlite3.Error:
+        record("FAIL", "memoria FTS5", "este SQLite no incluye FTS5")
+        return
+    path = memory_path(cfg, ROOT)
+    if not path.exists():
+        record("OK", "memoria", f"FTS5 disponible; la base se crea al primer uso ({path})")
+        return
+    try:
+        store = MemoryStore(path)
+        check, stats = store.integrity_check(), store.stats()
+        store.close()
+    except MemoryStoreError as exc:
+        record("FAIL", "memoria", str(exc))
+        return
+    detail = f"{path}: {stats['counts']['messages']} mensajes, {stats['counts']['memories']} notas, {stats['bytes'] / 1024:.0f} KiB"
+    if check != "ok":
+        record("FAIL", "memoria integridad", check)
+    else:
+        record("OK", "memoria", detail)
+    if oct(path.stat().st_mode & 0o777) != "0o600":
+        record("WARN", "memoria permisos", f"{path} deberia ser 0600: chmod 600 {path}")
 
 
 def main() -> int:
@@ -128,6 +160,8 @@ def main() -> int:
                        "definida" if present else f"no definida (necesaria para usar '{pname}')")
 
         check_server_port(cfg["providers"]["providers"]["local"]["base_url"])
+
+        check_memory(cfg)
 
         ap = audit_path(cfg, ROOT)
         if ap.exists():

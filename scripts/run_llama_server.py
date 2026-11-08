@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from poeta.config import ConfigError, load_config  # noqa: E402
+from poeta.envfile import load_env_file  # noqa: E402
 
 # clave en el bloque `server` del modelo -> flag de llama-server (se omite si el valor es null)
 VALUE_FLAGS = (
@@ -88,6 +89,7 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
+    load_env_file(ROOT / ".env")  # antes de load_config: las rutas pueden usar variables del .env
     try:
         cmd = build_command(load_config(), args.model)
     except (ConfigError, FileNotFoundError) as exc:

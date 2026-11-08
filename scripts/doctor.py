@@ -8,14 +8,21 @@ Codigo de salida 1 si hay algun FAIL.
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
+import socket
 import sys
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from poeta.config import ConfigError, load_config  # noqa: E402
+from poeta.envfile import load_env_file  # noqa: E402
+from poeta.security import audit_path, verify_chain  # noqa: E402
 
 results: list[tuple[str, str, str]] = []
 
@@ -32,6 +39,24 @@ def check_tool(name: str, level_if_missing: str, hint: str) -> None:
         record(level_if_missing, name, f"no encontrado. {hint}")
 
 
+def check_server_port(base_url: str) -> None:
+    """Indica si el puerto del proveedor local esta libre, ocupado por llama-server u ocupado por otro servicio."""
+    parsed = urllib.parse.urlparse(base_url)
+    host, port = parsed.hostname or "127.0.0.1", parsed.port or 80
+    with socket.socket() as s:
+        s.settimeout(1)
+        in_use = s.connect_ex((host, port)) == 0
+    if not in_use:
+        record("OK", f"puerto {port}", "libre (llama-server no esta corriendo)")
+        return
+    try:
+        with urllib.request.urlopen(f"{base_url.rstrip('/')}/models", timeout=3) as resp:
+            ids = [m.get("id") for m in json.load(resp).get("data", [])]
+        record("OK", f"servidor :{port}", f"responde como API OpenAI; modelos: {ids}")
+    except Exception:
+        record("WARN", f"puerto {port}", "ocupado por otro servicio (no responde como API OpenAI). Ver: ss -ltnp | grep :" + str(port))
+
+
 def main() -> int:
     # Python
     v = sys.version_info
@@ -39,6 +64,20 @@ def main() -> int:
         record("OK", "python", f"{v.major}.{v.minor}.{v.micro}")
     else:
         record("FAIL", "python", f"{v.major}.{v.minor} (se requiere 3.12 o superior)")
+
+    # .env (se carga antes que la configuracion, igual que en main.py)
+    env = load_env_file(ROOT / ".env")
+    if not env.found:
+        record("WARN", ".env", "no existe; solo hace falta para claves cloud (ver .env.example)")
+    elif env.error:
+        record("FAIL", ".env", f"no se pudo leer ({env.error})")
+    else:
+        names = ", ".join(env.loaded) or "ninguna nueva"
+        record("OK", ".env", f"variables cargadas: {names}" + (f"; ya definidas en el shell: {', '.join(env.kept_existing)}" if env.kept_existing else ""))
+        if env.malformed_lines:
+            record("WARN", ".env formato", f"lineas mal formadas (se omiten): {env.malformed_lines}")
+        if env.insecure_permissions:
+            record("WARN", ".env permisos", "legible por otros usuarios; protegelo con: chmod 600 .env")
 
     # Configuracion
     cfg = None
@@ -81,6 +120,21 @@ def main() -> int:
                    f"{mp}" + ("" if mp.is_file() else " (no existe)"))
         else:
             record("WARN", f"modelo {key}", "sin 'file' en models.yaml")
+
+        for pname, p in cfg["providers"]["providers"].items():
+            if p.get("cloud") and p.get("enabled") and p.get("api_key_env"):
+                present = bool(os.environ.get(p["api_key_env"]))
+                record("OK" if present else "WARN", f"clave {p['api_key_env']}",
+                       "definida" if present else f"no definida (necesaria para usar '{pname}')")
+
+        check_server_port(cfg["providers"]["providers"]["local"]["base_url"])
+
+        ap = audit_path(cfg, ROOT)
+        if ap.exists():
+            ok, n, err = verify_chain(ap)
+            record("OK" if ok else "FAIL", "auditoria", f"{n} eventos, cadena integra" if ok else f"cadena rota tras {n} eventos: {err}")
+        else:
+            record("OK", "auditoria", "sin eventos todavia")
 
         free_gb = shutil.disk_usage(ROOT).free / 1e9
         record("OK" if free_gb > 20 else "WARN", "espacio libre", f"{free_gb:.0f} GB")

@@ -1,5 +1,10 @@
 # Permisos y privacidad (secc. 7.1, 10.3, 12.2, 19).
-# INVARIANTE (validado al cargar): cloud.require_confirmation debe ser true.
+# Invariantes validados al cargar (poeta/security/permissions.py, validate_config):
+#   - cloud.require_confirmation = true
+#   - el nivel 3 nunca es auto; el nivel 4 siempre es confirm_explicit
+#   - actions.privileged = never
+#   - modify_file, run_command, install_package y cloud_transfer no bajan del nivel 3; delete_data no baja del 4
+# Una accion que no figura en `actions` se deniega.
 
 cloud:
   require_confirmation: true        # cada operacion, nunca automatica
@@ -26,3 +31,33 @@ risk_levels:
 
 never_automatic:
   - privileged_operations
+
+# Nivel de riesgo de cada accion (1-4) o `never`.
+actions:
+  open_app: 1
+  read_authorized_file: 1
+  search_web: 2
+  browse_web: 2
+  create_document: 3          # baja a 1 dentro de file_access.auto_create_dirs si el archivo no existe
+  modify_file: 3
+  run_command: 3              # ademas exige estar en commands.allowlist
+  install_package: 3
+  cloud_transfer: 3           # siempre confirmacion; explicita si lleva imagenes o audio
+  delete_data: 4
+  privileged: never
+
+# Carpetas: relativas a la raiz del proyecto o absolutas. Los enlaces simbolicos se resuelven antes de comprobar.
+file_access:
+  allowed_dirs: [workspace]       # unica zona donde el agente puede leer o escribir; agrega carpetas aqui
+  auto_create_dirs: [workspace]   # crear documentos nuevos aqui no pide confirmacion
+  protected: [config, logs, .env] # nunca accesibles para el agente, ni siquiera para lectura
+
+# Solo estos comandos (por nombre, sin ruta) pueden llegar a confirmacion; el resto se deniega.
+commands:
+  allowlist: []
+
+# Segundos de espera de una confirmacion antes de denegar. null = esperar sin limite.
+confirmation_timeout_s: null
+
+audit:
+  file: logs/audit.jsonl          # relativo a la raiz del proyecto

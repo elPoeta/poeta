@@ -1,0 +1,21 @@
+# Herramientas del agente (Fase 6). Cada llamada pasa por el Permission Manager (permissions.yaml).
+enabled: true
+max_tool_rounds: 6          # veces que el modelo puede encadenar herramientas en un mismo turno
+timeout_s: 30
+max_output_chars: 8000      # el resultado que ve el modelo se recorta a esto
+
+builtin:                    # true/false por herramienta
+  get_datetime: true        # nivel 1
+  read_file: true           # nivel 1, solo carpetas de file_access.allowed_dirs
+  list_dir: true            # nivel 1
+  write_file: true          # crear: nivel 1 en 'workspace'; reemplazar: nivel 3 (confirma)
+  open_app: true            # nivel 1: abre aplicaciones instaladas por nombre, sin argumentos
+  fetch_url: true           # nivel 2: descarga paginas publicas (bloquea redes locales)
+  run_command: true         # nivel 3 y solo comandos de commands.allowlist (vacia por defecto = inoperante)
+
+read_file_max_bytes: 200000
+write_file_max_chars: 1000000
+fetch:
+  max_bytes: 1000000
+  block_private_networks: true   # no permite acceder a 127.0.0.1, 192.168.x.x, etc.
+  user_agent: "POETA/0.1 (asistente local)"

@@ -46,6 +46,11 @@ actions:
   install_package: 3
   cloud_transfer: 3           # siempre confirmacion; explicita si lleva imagenes o audio
   delete_data: 4
+  system_info: 1              # fecha, hora y datos inocuos del sistema
+  mcp_read: 1                 # herramientas MCP de solo lectura (segun mcp.yaml)
+  mcp_browse: 2               # herramientas MCP de navegacion o busqueda
+  mcp_write: 3                # herramientas MCP que modifican algo (valor por defecto de un servidor)
+  mcp_sensitive: 4            # herramientas MCP sensibles o irreversibles
   privileged: never
 
 # Carpetas: relativas a la raiz del proyecto o absolutas. Los enlaces simbolicos se resuelven antes de comprobar.

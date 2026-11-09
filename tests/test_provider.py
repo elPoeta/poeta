@@ -56,6 +56,22 @@ def test_connection_refused_is_unavailable(dead_url):
         asyncio.run(collect(provider(dead_url).stream_chat([], "m")))
 
 
+def test_connection_error_message_includes_cause(dead_url):
+    with pytest.raises(ProviderUnavailable, match="ConnectError"):
+        asyncio.run(collect(provider(dead_url).stream_chat([], "m")))
+
+
+def test_local_provider_ignores_proxy_env(fake_llm, monkeypatch):
+    for var in ("HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.setenv(var, "http://127.0.0.1:1")  # proxy inexistente
+    for var in ("NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(var, raising=False)
+    local = OpenAICompatibleProvider("local", fake_llm.url, cloud=False)
+    chunks = asyncio.run(collect(local.stream_chat([], "m")))
+    assert "".join(c.text for c in chunks) == "Hola, mundo!"
+    assert asyncio.run(local.list_models()) == ["fake-model"]
+
+
 def test_list_models_and_health(fake_llm, dead_url):
     assert asyncio.run(provider(fake_llm.url).list_models()) == ["fake-model"]
     assert asyncio.run(provider(fake_llm.url).health()) is True

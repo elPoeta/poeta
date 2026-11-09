@@ -12,6 +12,10 @@ dependencies = [
 dev = [
     "pytest>=8.0",
 ]
+# Fase 6: cliente MCP (solo si usas servidores MCP).
+mcp = [
+    "mcp>=2,<3",
+]
 # Fase 4: voz. 'cuda' aporta las librerias CUDA 12 que CTranslate2 necesita
 # aunque el sistema tenga otro toolkit (ver poeta/voice/cuda_env.py).
 voice = [

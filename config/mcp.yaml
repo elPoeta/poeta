@@ -3,13 +3,22 @@
 
 transports: [stdio, streamable_http]
 
-authorized_servers: []      # se llena servidor por servidor en la Fase 6
+authorized_servers: [duckduckgo]      # doble llave: enabled: true Y estar en esta lista
+# Flujo: 1) completar command/args del servidor, enabled: true y agregarlo arriba
+#        2) python main.py mcp list           (ver herramientas y huella)
+#        3) python main.py mcp approve NOMBRE (fija la huella; si el servidor cambia, se desactiva)
+# Campos por servidor: command, args, env (solo estas variables llegan al servidor), url (streamable_http),
+#   risk: read|browse|write|sensitive (defecto write = pide confirmacion), tool_risk: {herramienta: riesgo},
+#   untrusted (defecto true), timeout_s, connect_timeout_s
 
 servers:
   duckduckgo:
-    enabled: false
+    enabled: true
     transport: stdio
-    command: null           # servidor MCP de terceros: verificar antes de instalar
+    command: uvx
+    args: [duckduckgo-mcp-server]
+    risk: browse        # pide confirmación nivel 2; usá "read" si querés que no pregunte
+    connect_timeout_s: 60   # la primera vez uvx descarga paquetes
   playwright:
     enabled: false
     transport: stdio

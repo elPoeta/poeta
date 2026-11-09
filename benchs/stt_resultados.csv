@@ -1,0 +1,33 @@
+combo,audio,audio_s,latencia_s,wer,texto
+large-v3|cuda|float16,recording_20260822_155504.wav,5.91,0.453,,"Allí podemos ver los datos, modificarlos, acceder a los turnos, filtrar los turnos."
+large-v3|cuda|float16,recording_20260822_155516.wav,2.21,0.314,,Y también ver los documentos.
+large-v3|cuda|float16,recording_20260822_155638.wav,7.69,0.401,,"En el sector de documentos podemos filtrarlos, ver los activos."
+large-v3|cuda|float16,recording_20260822_155702.wav,2.11,0.317,,Según el tipo o el estado...
+large-v3|cuda|float16,recording_20260822_155725.wav,12.18,0.728,,"Tenemos acceso a la papelera. Si eliminamos un documento, éste se alojará allí y permanecerá durante 30 días. Si en 30 días no tomamos ninguna acción, el documento se borra definitivamente."
+large-v3|cuda|float16,recording_20260822_155748.wav,1.49,0.301,,"Pasado ese periodo,"
+large-v3|cuda|float16,recording_20260822_160110.wav,5.03,0.408,,"Con Magendi, tu documentación está ordenada y accesible en todo momento."
+large-v3|cuda|float16,recording_20260917_141910.wav,11.73,0.458,,Ingresamos a mercadopago.com barra developers y ahí tocamos el botón integraciones.
+large-v3-turbo|cuda|int8_float16,recording_20260822_155504.wav,5.91,0.251,,"Allí podemos ver los datos, modificarlos, acceder a los turnos, filtrar los turnos."
+large-v3-turbo|cuda|int8_float16,recording_20260822_155516.wav,2.21,0.211,,Y también ver los documentos.
+large-v3-turbo|cuda|int8_float16,recording_20260822_155638.wav,7.69,0.231,,"En el sector de documentos podemos filtrarlos, ver los activos."
+large-v3-turbo|cuda|int8_float16,recording_20260822_155702.wav,2.11,0.211,,según el tipo o el estado
+large-v3-turbo|cuda|int8_float16,recording_20260822_155725.wav,12.18,0.297,,"Tenemos acceso a la papelera. Si eliminamos un documento, este se alojará allí y permanecerá durante 30 días. Si en 30 días no tomamos ninguna acción, el documento se borra definitivamente."
+large-v3-turbo|cuda|int8_float16,recording_20260822_155748.wav,1.49,0.205,,Pasado ese periodo...
+large-v3-turbo|cuda|int8_float16,recording_20260822_160110.wav,5.03,0.226,,"Con Magendi, tu documentación está ordenada y accesible en todo momento."
+large-v3-turbo|cuda|int8_float16,recording_20260917_141910.wav,11.73,0.241,,Ingresamos a mercadopago.com barra developers y ahí tocamos el botón integraciones.
+large-v3-turbo|cpu|int8,recording_20260822_155504.wav,5.91,3.192,,"Allí podemos ver los datos, modificarlos, acceder a los turnos, filtrar los turnos."
+large-v3-turbo|cpu|int8,recording_20260822_155516.wav,2.21,3.03,,Y también ver los documentos.
+large-v3-turbo|cpu|int8,recording_20260822_155638.wav,7.69,3.158,,"En el sector de documentos podemos filtrarlos, ver los activos."
+large-v3-turbo|cpu|int8,recording_20260822_155702.wav,2.11,3.034,,según el tipo o el estado
+large-v3-turbo|cpu|int8,recording_20260822_155725.wav,12.18,3.517,,"Tenemos acceso a la papelera. Si eliminamos un documento, éste se alojará allí y permanecerá durante 30 días. Si en 30 días no tomamos ninguna acción, el documento se borra definitivamente."
+large-v3-turbo|cpu|int8,recording_20260822_155748.wav,1.49,3.017,,"Pasado ese periodo,"
+large-v3-turbo|cpu|int8,recording_20260822_160110.wav,5.03,3.184,,"Con Magendi, tu documentación está ordenada y accesible en todo momento."
+large-v3-turbo|cpu|int8,recording_20260917_141910.wav,11.73,3.233,,Ingresamos a mercadopago.com barra developers y ahí tocamos el botón integraciones.
+distil-large-v3|cpu|int8,recording_20260822_155504.wav,5.91,3.135,,"There we can see the data, modify them, access to the turnos, filter the turns."
+distil-large-v3|cpu|int8,recording_20260822_155516.wav,2.21,3.033,,and also to the documents.
+distil-large-v3|cpu|int8,recording_20260822_155638.wav,7.69,6.082,,"In the sector of documents, we can filter those, of the of the"
+distil-large-v3|cpu|int8,recording_20260822_155702.wav,2.11,3.049,,"According the type or the state,"
+distil-large-v3|cpu|int8,recording_20260822_155725.wav,12.18,7.028,,"We have access to the paperer. If we eliminate a document, this is the lojara there and will be there for 30 days. If in 30 days, no, we don't take any action, the document is border definitive."
+distil-large-v3|cpu|int8,recording_20260822_155748.wav,1.49,3.012,,Passed that period.
+distil-large-v3|cpu|int8,recording_20260822_160110.wav,5.03,3.174,,"With Maghendi, your documentation is ordered and accessible in all moment."
+distil-large-v3|cpu|int8,recording_20260917_141910.wav,11.73,3.187,,"Ingresses, Mercadopago.com, barredevelopers, and there we touch the button, integrations."

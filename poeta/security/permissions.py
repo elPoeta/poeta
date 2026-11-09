@@ -44,6 +44,11 @@ RECOMMENDED = {
     "cloud_transfer": (3, "envia tu texto a un proveedor externo"),
     "delete_data": (4, "borra datos de forma irreversible"),
 }
+# Nivel sugerido para las acciones que agregan las herramientas; si faltan en permissions.yaml se avisa al arrancar.
+SUGGESTED_ACTIONS = {
+    "camera_capture": 2, "desktop_notify": 1, "desktop_read": 1, "desktop_control": 2, "window_control": 3,
+    "service_read": 1, "service_control": 3, "process_read": 1, "process_stop": 3, "run_automation": 3,
+}
 # Acciones que operan sobre una ruta (details["path"]).
 PATH_ACTIONS = {"read_authorized_file", "create_document", "modify_file", "delete_data"}
 
@@ -187,6 +192,10 @@ class PermissionManager:
         self._timeout = perm.get("confirmation_timeout_s")
         self._confirmer = confirmer
         self.audit = audit
+
+    def missing_actions(self, kinds: Any) -> dict[str, Any]:
+        """Acciones usadas por herramientas que no figuran en permissions.yaml (se denegarian) y su nivel sugerido."""
+        return {k: SUGGESTED_ACTIONS.get(k, 3) for k in sorted(set(kinds)) if k not in self._actions}
 
     def _abs(self, p: str) -> Path:
         path = Path(str(p)).expanduser()

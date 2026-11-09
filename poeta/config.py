@@ -28,6 +28,8 @@ CONFIG_FILES = (
     "permissions",
     "memory",
     "tools",
+    "desktop",
+    "automations",
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -121,6 +123,15 @@ def _validate(cfg: dict[str, dict[str, Any]]) -> None:
         GestureConfig.from_config(cfg)
     except VisionConfigError as exc:
         raise ConfigError(f"vision.yaml: {exc}") from exc
+
+    from poeta.automation.desktop import DesktopConfig, DesktopConfigError
+    from poeta.automation.routines import RoutineConfigError, load_routines
+
+    try:
+        DesktopConfig.from_config(cfg)
+        load_routines(cfg)
+    except (DesktopConfigError, RoutineConfigError) as exc:
+        raise ConfigError(f"desktop.yaml/automations.yaml: {exc}") from exc
 
     name = (cfg["settings"].get("assistant") or {}).get("name")
     if not isinstance(name, str) or not name.strip():

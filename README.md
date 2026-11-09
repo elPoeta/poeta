@@ -157,3 +157,19 @@ suscriptor. `HandTracker` (MediaPipe HandLandmarker) -> `GestureEngine` (poses p
 con la interaccion activa: `thumb_up` (confirmar), `thumb_down` (cancelar), `point` (seleccionar), `swipe_left/right`.
 Hay espera entre gestos y tolerancia a parpadeos. Un gesto nunca autoriza solo una accion sensible.
 Aun no esta conectado al agente ni a la voz (eso es la Fase 9).
+
+## Fase 7: automatizacion del escritorio (KDE / Wayland)
+
+1. `python scripts/add_permission_actions.py` agrega a tu `permissions.yaml` las acciones nuevas (conserva tus ajustes; deja `.bak`).
+2. `python scripts/desktop_probe.py` verifica que existan las utilidades: `notify-send`, `playerctl`, `wpctl`, `kdotool`,
+   `systemctl --user`, `ps`. Cada herramienta solo se registra si su utilidad esta instalada (`/tools` las lista).
+3. Edita `config/desktop.yaml` (tope de volumen, `services.allowlist`) y `config/automations.yaml` (rutinas).
+
+Herramientas: `notify`, `media_status`, `media_control`, `get_volume`, `set_volume`, `list_windows`, `window_action`,
+`service_status`, `service_control`, `list_processes`, `stop_process`, `run_automation`.
+Niveles por defecto: lectura 1; notificar, multimedia y volumen 2; cerrar/minimizar ventanas, controlar servicios, detener
+procesos y ejecutar rutinas 3 (confirmacion). Titulos de ventana, metadatos multimedia y nombres de proceso son datos NO
+confiables (el contenido lo controlan terceros). `service_control` solo actua sobre `desktop.services.allowlist`;
+`stop_process` solo envia SIGTERM a procesos tuyos y nunca a procesos criticos; `window_action` verifica el titulo real
+antes de actuar. Una rutina solo la nombra el modelo: sus pasos son fijos y cada paso pasa ademas por sus propios permisos.
+`/run NOMBRE` la ejecuta desde el chat.

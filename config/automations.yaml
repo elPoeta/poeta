@@ -1,0 +1,15 @@
+# Rutinas: secuencias FIJAS de herramientas (secc. 12). El modelo solo elige el nombre; no puede cambiar los pasos.
+# Ejecutar una rutina pide confirmacion mostrando todos los pasos; ademas cada paso pasa por sus propios permisos.
+# Se ejecutan con "ejecuta la rutina modo_trabajo" (texto o voz) o con /run NOMBRE en el chat.
+# Ejemplo (descomentalo y adaptalo):
+#
+# automations:
+#   modo_trabajo:
+#     description: Abre el navegador y baja el volumen
+#     stop_on_error: true
+#     steps:
+#       - {tool: open_app, args: {name: Firefox}}
+#       - {tool: set_volume, args: {percent: 30}}
+#       - {tool: notify, args: {title: POETA, body: Modo trabajo listo}}
+
+automations: {}

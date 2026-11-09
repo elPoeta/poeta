@@ -1,0 +1,71 @@
+# Permisos y privacidad (secc. 7.1, 10.3, 12.2, 19).
+# Todo es configurable: es tu equipo. Si bajas un nivel por debajo de lo recomendado, POETA arranca igual
+# pero muestra un AVISO con el nivel sugerido, lo registra en logs y en la auditoria (permissions_relaxed).
+# Recomendados: nivel 3 = confirm; nivel 4 = confirm_explicit; cloud.require_confirmation = true;
+#   modify_file / run_command / install_package / cloud_transfer >= 3; delete_data = 4.
+# Lo unico que se rechaza: errores de forma (politica o nivel inexistente), y `privileged`, que siempre es never
+#   (operaciones con privilegios de administrador: no existe forma de automatizarlas).
+# Aunque desactives la confirmacion cloud, el contenido con imagenes o audio siempre exige confirmacion explicita.
+# Una accion que no figura en `actions` se deniega.
+
+cloud:
+  require_confirmation: true        # cada operacion, nunca automatica
+  confirmation_shows:
+    - provider
+    - model
+    - operation_type
+    - text_to_send
+    - included_context
+    - attached_documents
+    - tool_results_included
+  never_send_automatically:
+    - private_memory
+    - local_files
+    - webcam_images
+    - mic_audio
+    - full_history
+
+risk_levels:
+  1: { description: "Consultas de lectura",                 policy: auto }
+  2: { description: "Navegacion y extraccion",              policy: auto }
+  3: { description: "Modificacion de archivos",             policy: confirm }
+  4: { description: "Acciones sensibles o irreversibles",   policy: confirm_explicit }
+
+never_automatic:
+  - privileged_operations
+
+# Nivel de riesgo de cada accion (1-4) o `never`.
+actions:
+  open_app: 1
+  read_authorized_file: 1
+  search_web: 2
+  browse_web: 2
+  create_document: 3          # baja a 1 dentro de file_access.auto_create_dirs si el archivo no existe
+  modify_file: 3
+  run_command: 3              # ademas exige estar en commands.allowlist
+  install_package: 3
+  cloud_transfer: 3           # siempre confirmacion; explicita si lleva imagenes o audio
+  delete_data: 4
+  system_info: 1              # fecha, hora y datos inocuos del sistema
+  mcp_read: 1                 # herramientas MCP de solo lectura (segun mcp.yaml)
+  mcp_browse: 2               # herramientas MCP de navegacion o busqueda
+  mcp_write: 3                # herramientas MCP que modifican algo (valor por defecto de un servidor)
+  mcp_sensitive: 4            # herramientas MCP sensibles o irreversibles
+  privileged: never
+  camera_capture: 2
+
+# Carpetas: relativas a la raiz del proyecto o absolutas. Los enlaces simbolicos se resuelven antes de comprobar.
+file_access:
+  allowed_dirs: [workspace]       # unica zona donde el agente puede leer o escribir; agrega carpetas aqui
+  auto_create_dirs: [workspace]   # crear documentos nuevos aqui no pide confirmacion
+  protected: [config, logs, data, .env] # nunca accesibles para el agente, ni siquiera para lectura (data = memoria)
+
+# Solo estos comandos (por nombre, sin ruta) pueden llegar a confirmacion; el resto se deniega.
+commands:
+  allowlist: []
+
+# Segundos de espera de una confirmacion antes de denegar. null = esperar sin limite.
+confirmation_timeout_s: null
+
+audit:
+  file: logs/audit.jsonl          # relativo a la raiz del proyecto

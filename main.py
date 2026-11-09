@@ -5,6 +5,7 @@
   python main.py voice [--wake|--always]  Conversacion por voz (Enter para hablar; Enter interrumpe).
   python main.py audit [--verify]       Muestra o verifica el registro de auditoria.
   python main.py memory stats|export ARCHIVO|wipe   Administra la memoria.
+  python main.py tool NOMBRE ['{"arg": ...}']   Ejecuta una herramienta sin el modelo (diagnostico); 'tool list' las lista.
   python main.py mcp list|approve NOMBRE   Servidores MCP: ver sus herramientas y aprobarlos.
 """
 
@@ -19,13 +20,14 @@ from pathlib import Path
 from typing import Any
 
 from poeta.config import PROJECT_ROOT, ConfigError, assistant_name, load_config, system_prompt
+from poeta.automation import DesktopConfig, load_routines, register_desktop, register_routines
 from poeta.core import AgentCore
 from poeta.envfile import load_env_file
 from poeta.interface import cli_confirmer, make_cli_confirmer
 from poeta.logging_setup import setup_logging
 from poeta.memory import KINDS, MemoryStore, MemoryStoreError
 from poeta.models import ModelRouter, RouterError
-from poeta.providers import ProviderError
+from poeta.providers import ProviderError, ToolCall
 from poeta.tools import ToolRegistry, ToolsConfig, register_builtin
 from poeta.mcp import McpConfig, McpManager
 from poeta.security import AuditError, AuditLog, PermissionManager, audit_path, read_tail, verify_chain
@@ -40,6 +42,7 @@ HELP = """Comandos:
   /forget ID                Olvida una nota
   /prefer CLAVE=VALOR       Guarda una preferencia (sin argumentos: las lista)
   /unprefer CLAVE           Borra una preferencia
+  /run NOMBRE               Ejecuta una rutina de config/automations.yaml
   /tools                    Herramientas disponibles (integradas y MCP)
   /conversations            Lista las conversaciones guardadas
   /resume ID                Retoma una conversacion
@@ -77,6 +80,15 @@ async def run_command(line: str, router: ModelRouter, agent: AgentCore) -> bool:
         return True
     if cmd == "/help":
         print(HELP)
+    elif cmd == "/run":
+        reg = agent.tools
+        if reg is None or reg.get("run_automation") is None:
+            print("No hay rutinas disponibles (config/automations.yaml).")
+        elif not arg:
+            print("Uso: /run NOMBRE")
+        else:
+            res = await reg.execute(ToolCall(id="cmd-run", name="run_automation", arguments=json.dumps({"name": arg})))
+            print(res.text)
     elif cmd == "/tools":
         reg = agent.tools
         if reg is None or not reg.names():
@@ -204,6 +216,18 @@ def build_agent(cfg: dict, provider: str | None, model: str | None, confirmer=No
     if tools_cfg.enabled:
         registry = ToolRegistry(permissions, tools_cfg.max_output_chars, tools_cfg.timeout_s)
         register_builtin(registry, tools_cfg, PROJECT_ROOT)
+        desk = DesktopConfig.from_config(cfg)
+        if desk.enabled:
+            _, skipped = register_desktop(registry, desk)
+            for name, why in skipped.items():
+                logging.getLogger("poeta").info("herramienta de escritorio omitida: %s (%s)", name, why)
+            _, skipped_r = register_routines(registry, load_routines(cfg))
+            for name, why in skipped_r.items():
+                print(f"Aviso: la rutina '{name}' no se cargo: {why}", file=sys.stderr)
+        for kind, level in permissions.missing_actions(
+                t.action for t in registry.tools() if isinstance(t.action, str)).items():
+            print(f"Aviso de permisos: falta la accion '{kind}' en permissions.yaml (se denegara). "
+                  f"Agrega en 'actions:' la linea  {kind}: {level}", file=sys.stderr)
         mcp = McpManager(McpConfig.from_config(cfg), registry, PROJECT_ROOT, audit)
     agent = AgentCore(
         router,
@@ -476,6 +500,29 @@ def mcp_cmd(cfg: dict, action: str, name: str | None) -> int:
     return 0
 
 
+async def tool_cmd(cfg: dict, name: str | None, raw: str | None) -> int:
+    """Ejecuta una herramienta directamente (sin modelo): separa 'fallo la herramienta' de 'el modelo no la uso'."""
+    built = build_agent(cfg, None, None)
+    if built is None:
+        return 1
+    _, agent, _ = built
+    reg = agent.tools
+    if reg is None:
+        print("Las herramientas estan deshabilitadas (config/tools.yaml).")
+        return 1
+    await start_mcp(agent)
+    try:
+        if not name or name == "list":
+            for t in reg.tools():
+                print(f"{t.name:<28} {json.dumps(t.parameters.get('properties', {}), ensure_ascii=False)[:90]}")
+            return 0
+        res = await reg.execute(ToolCall(id="cli", name=name, arguments=raw or "{}"))
+        print(f"[{'denegada' if res.denied else ('ok' if res.ok else 'ERROR')}] {res.text}")
+        return 0 if res.ok else 1
+    finally:
+        await stop_mcp(agent)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="poeta")
     sub = parser.add_subparsers(dest="command")
@@ -498,6 +545,9 @@ def main() -> int:
     mem_p = sub.add_parser("memory", help="Administrar la memoria")
     mem_p.add_argument("action", choices=["stats", "export", "wipe"])
     mem_p.add_argument("target", nargs="?", help="Archivo de destino (solo export)")
+    tool_p = sub.add_parser("tool", help="Ejecuta una herramienta sin el modelo (diagnostico)")
+    tool_p.add_argument("name", nargs="?", help="Nombre de la herramienta, o 'list'")
+    tool_p.add_argument("args", nargs="?", help="Argumentos en JSON, ej: '{\"name\": \"Firefox\"}'")
     mcp_p = sub.add_parser("mcp", help="Servidores MCP")
     mcp_p.add_argument("action", choices=["list", "approve", "inspect"])
     mcp_p.add_argument("name", nargs="?", help="Servidor (approve/inspect)")
@@ -526,6 +576,8 @@ def main() -> int:
         return asyncio.run(voice(cfg, args.provider, args.model, args.resume_last, args.always, args.wake))
     if args.command == "audit":
         return audit_cmd(cfg, args.verify, args.tail)
+    if args.command == "tool":
+        return asyncio.run(tool_cmd(cfg, args.name, args.args))
     if args.command == "mcp":
         return mcp_cmd(cfg, args.action, args.name)
     if args.command == "memory":

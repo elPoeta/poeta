@@ -111,6 +111,17 @@ def _validate(cfg: dict[str, dict[str, Any]]) -> None:
     except McpConfigError as exc:
         raise ConfigError(f"mcp.yaml: {exc}") from exc
 
+    from poeta.gestures import GestureConfig
+    from poeta.vision import CameraConfig, VisionConfigError
+    from poeta.vision.hands import HandsConfig
+
+    try:
+        CameraConfig.from_config(cfg)
+        HandsConfig.from_config(cfg, PROJECT_ROOT)
+        GestureConfig.from_config(cfg)
+    except VisionConfigError as exc:
+        raise ConfigError(f"vision.yaml: {exc}") from exc
+
     name = (cfg["settings"].get("assistant") or {}).get("name")
     if not isinstance(name, str) or not name.strip():
         raise ConfigError("settings.assistant.name debe ser un texto no vacio.")

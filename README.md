@@ -143,3 +143,17 @@ las acciones de nivel 3+ piden confirmacion explicita.
 
 Limites conocidos: `fetch_url` no cubre DNS rebinding entre la resolucion y la conexion; los servidores MCP de terceros
 no estan verificados por POETA; el contenido binario (imagenes) de las herramientas se descarta.
+
+## Fase 5: vision y gestos (5a-5b)
+
+1. `uv pip install -e '.[vision]'` y `python scripts/fetch_models.py` (modelo de manos de MediaPipe, ~7.5 MB).
+2. `python scripts/camera_probe.py` identifica tus camaras (color vs monocromo/IR); ajusta `camera.device` en `config/vision.yaml`.
+3. En `config/permissions.yaml`, en `actions:`, agrega `camera_capture: 2` (abrir la webcam; auditado).
+4. `python scripts/gesture_test.py` muestra la pose en vivo; `--calibrate` ajusta los umbrales de dedos a tu mano.
+
+Arquitectura: `CameraManager` abre la webcam UNA vez y reparte cuadros (cada modulo pide su fps); se libera al irse el ultimo
+suscriptor. `HandTracker` (MediaPipe HandLandmarker) -> `GestureEngine` (poses propias por geometria + logica temporal)
+-> eventos. Mano abierta 0.6 s = `palm` (detener, siempre activo); 1.5 s = `activate` (activa la interaccion 10 s);
+con la interaccion activa: `thumb_up` (confirmar), `thumb_down` (cancelar), `point` (seleccionar), `swipe_left/right`.
+Hay espera entre gestos y tolerancia a parpadeos. Un gesto nunca autoriza solo una accion sensible.
+Aun no esta conectado al agente ni a la voz (eso es la Fase 9).

@@ -194,6 +194,20 @@ def main() -> int:
     except OSError:
         record("FAIL", "audio (PortAudio)", "falta la libreria del sistema: sudo dnf install portaudio")
 
+    # Vision: dispositivo de camara y modelo de manos
+    try:
+        from poeta.vision import CameraConfig
+        from poeta.vision.hands import HandsConfig
+        dev = CameraConfig.from_config(cfg).device
+        if isinstance(dev, str):
+            record("OK" if Path(dev).exists() else "WARN", "camara", f"{dev}" + ("" if Path(dev).exists()
+                   else " no existe (python scripts/camera_probe.py)"))
+        mp_path = HandsConfig.from_config(cfg, ROOT).model_path
+        record("OK" if mp_path.is_file() else "WARN", "modelo de manos",
+               str(mp_path) if mp_path.is_file() else "falta (python scripts/fetch_models.py)")
+    except Exception as exc:  # noqa: BLE001
+        record("FAIL", "vision", str(exc))
+
     # MCP: SDK y servidores habilitados
     try:
         from poeta.mcp import McpConfig

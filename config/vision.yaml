@@ -1,13 +1,39 @@
-# Vision y gestos (secc. 9). Valores provisionales; identificar dispositivos en la Fase 5.
+# Vision y gestos (secc. 9). Una sola captura compartida; ningun modulo abre la webcam por su cuenta.
+# Identifica tu camara con: python scripts/camera_probe.py
 
 camera:
-  device: /dev/video0       # MJPEG hasta 2560x1440, YUYV 640x480
-  secondary_candidate: /dev/video2   # monocromo 640x360, posible sensor IR (sin verificar)
+  device: /dev/video0       # MJPEG hasta 2560x1440, YUYV 640x480 (video2 podria ser el sensor IR: sin verificar)
   width: 640
   height: 480
-  fps: null                 # medir uso de CPU antes de fijar
-  single_capture_instance: true      # una sola captura compartida
+  fps: 15                   # la camara solo se abre mientras alguien la usa; mide CPU antes de subirlo
+  fourcc: MJPG              # MJPG (liviano a 640x480) o YUYV
+  mirror: true              # espejo: mover la mano a tu derecha es "derecha" en la imagen
+  read_failures_max: 30     # lecturas fallidas seguidas antes de dar la camara por caida
+  single_capture_instance: true
+
+hands:
+  model_path: models/hand_landmarker.task    # python scripts/fetch_models.py
+  num_hands: 1
+  min_detection_confidence: 0.5
+  min_presence_confidence: 0.5
+  min_tracking_confidence: 0.5
+  fps: 10                   # cuadros por segundo que se analizan (el resto se descarta)
 
 gestures:
   engine: mediapipe
-  sensitive_actions_require_more_than_gesture: true
+  sensitive_actions_require_more_than_gesture: true   # un gesto nunca autoriza solo una accion sensible
+  hold_s: 0.6               # tiempo sostenido para que un gesto cuente
+  activate_hold_s: 1.5      # mano abierta sostenida: activa la interaccion
+  armed_s: 10               # la interaccion activada vence tras estos segundos sin gestos
+  require_arming: true      # pulgares, indice y deslizamientos solo cuentan con la interaccion activada
+  cooldown_s: 1.0           # pausa minima entre dos gestos
+  grace_s: 0.2              # parpadeos de deteccion tolerados sin reiniciar la espera
+  swipe_window_s: 0.5
+  swipe_min_dx: 0.30        # fraccion del ancho de la imagen
+  thresholds:               # ratios geometricos; `scripts/gesture_test.py --calibrate` ajusta los dedos a tu mano
+    finger_extended: 1.5
+    finger_curled: 1.25
+    thumb_extended: 1.45
+    thumb_tucked: 1.2
+    thumb_vertical: 0.6
+  calibration_file: data/gesture_calibration.json

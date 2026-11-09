@@ -314,3 +314,14 @@ def test_answer_is_not_left_in_the_queue_for_the_next_turn(capsys):
         return keys.get_nowait()
 
     assert asyncio.run(go()) is None
+
+
+def test_latency_report_excludes_time_spent_authorizing():
+    import re
+
+    agent, pipe, out = run_with_confirmation("s")  # la respuesta llega ~0,3 s despues de empezar el turno
+    report = next(o for o in out if "1er texto" in o)
+    assert "autorizacion" in report and "(excluida)" in report
+    first_text = float(re.search(r"1er texto ([\d.]+)s", report).group(1))
+    waited = float(re.search(r"autorizacion ([\d.]+)s", report).group(1))
+    assert waited >= 0.25 and first_text < 0.15  # sin descontar seria >= 0,3

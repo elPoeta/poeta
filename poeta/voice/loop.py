@@ -42,6 +42,7 @@ class LineQueue:
         self._front: list[str] = []  # lineas devueltas con unget(): salen primero
         self._loop = asyncio.get_running_loop()
         self._awaiting: asyncio.Future[str] | None = None  # una confirmacion esta esperando respuesta
+        self.ask_wait_s = 0.0  # tiempo total que el usuario tardo en responder confirmaciones
 
     def put(self, line: str) -> None:  # thread-safe
         self._loop.call_soon_threadsafe(self._deliver, line)
@@ -59,10 +60,12 @@ class LineQueue:
         fut: asyncio.Future[str] = self._loop.create_future()
         self._awaiting = fut
         print(prompt, end="", flush=True)
+        t0 = time.perf_counter()
         try:
             return await fut
         finally:
             self._awaiting = None
+            self.ask_wait_s += time.perf_counter() - t0
 
     def unget(self, line: str) -> None:
         self._front.insert(0, line)
@@ -93,10 +96,14 @@ class LineQueue:
 
 class VoiceLoop:
     def __init__(self, *, audio: Any, stt: Any, pipeline: Any, agent: Any, keys: LineQueue,
-                 mode: str = "ptt", on_command: Callable[[str], Awaitable[bool]] | None = None,
+                 mode: str = "ptt", wake: Any = None, followup_s: float = 8.0, chime: Any = None,
+                 on_command: Callable[[str], Awaitable[bool]] | None = None,
                  out: Callable[..., None] = print, listen_timeout: float = 15.0):
-        if mode not in ("ptt", "always"):
+        if mode not in ("ptt", "always", "wake"):
             raise ValueError(f"modo invalido: {mode!r}")
+        if mode == "wake" and wake is None:
+            raise ValueError("el modo wake necesita un detector (wake=...)")
+        self.wake, self.followup_s, self.chime = wake, followup_s, chime
         self.audio, self.stt, self.pipe, self.agent, self.keys = audio, stt, pipeline, agent, keys
         self.mode, self.on_command, self.out, self.listen_timeout = mode, on_command, out, listen_timeout
         self.turns = 0
@@ -105,6 +112,9 @@ class VoiceLoop:
     async def run(self) -> int:
         if self.mode == "ptt":
             self.out("Enter = hablar | escribe para enviar texto | /help | /quit")
+        elif self.mode == "wake":
+            self.out("Di 'poeta' seguido de tu orden. Lo que no empiece con la palabra de activacion se descarta. "
+                     "Enter interrumpe. /quit para salir.")
         else:
             self.out("Escuchando todo el tiempo (sin palabra de activacion). Enter interrumpe a POETA. /quit para salir.")
         while True:
@@ -139,7 +149,59 @@ class VoiceLoop:
             handled = await self._handle_line(pending)
             if handled:
                 return True
+        if self.mode == "wake":
+            return await self._wake_once()
         return await self._listen_once(0.5, quiet=True)
+
+    # -- palabra de activacion ------------------------------------------------
+    async def _transcribe(self, utt: Any) -> tuple[str | None, float]:
+        t0 = time.perf_counter()
+        try:
+            res = await asyncio.to_thread(self.stt.transcribe, to_float32(utt))
+        except Exception as e:  # noqa: BLE001
+            self.out(f"Error de STT: {e}")
+            return None, 0.0
+        return res.text.strip(), time.perf_counter() - t0
+
+    async def _wake_once(self) -> bool:
+        utt = await asyncio.to_thread(self.audio.listen, 0.5)
+        if utt is None:
+            return False
+        try:
+            rest = await asyncio.to_thread(self.wake.detect, to_float32(utt))
+        except Exception as e:  # noqa: BLE001
+            self.out(f"Error de la palabra de activacion: {e}")
+            return False
+        if rest is None:
+            return False  # no era para POETA: se descarta sin transcribir con el modelo principal
+        text, stt_s = await self._transcribe(utt)  # la orden, con el modelo principal (mas preciso)
+        if text is None:
+            return False
+        after = self.wake.strip(text)
+        command = after if after is not None else rest
+        if len(re.sub(r"\W", "", command)) >= 2 and not is_noise_transcript(command):
+            self.out(f"Tu: {command}")
+            await self._respond(command, stt_s=stt_s)
+            return False
+        return await self._followup()
+
+    async def _followup(self) -> bool:
+        """Solo dijo 'poeta': tono de aviso y espera la orden en el siguiente enunciado."""
+        if self.chime is not None:
+            await asyncio.to_thread(self.audio.speak, self.chime[0], self.chime[1])
+        self.out("(te escucho)")
+        self.audio.flush_input()
+        utt = await asyncio.to_thread(self.audio.listen, self.followup_s)
+        if utt is None:
+            self.out("(no te escuche)")
+            return False
+        text, stt_s = await self._transcribe(utt)
+        if not text or is_noise_transcript(text):
+            self.out(f"(ignorado: {text!r})")
+            return False
+        self.out(f"Tu: {text}")
+        await self._respond(text, stt_s=stt_s)
+        return False
 
     async def _listen_once(self, timeout: float, quiet: bool = False) -> bool:
         if not quiet:
@@ -175,17 +237,22 @@ class VoiceLoop:
     async def _respond(self, text: str, stt_s: float | None = None) -> None:
         self.turns += 1
         t0 = time.perf_counter()
+        w0 = getattr(self.keys, "ask_wait_s", 0.0)
         first = {"text": None, "reason": None}
+
+        def since_start() -> float:  # no cuenta lo que tardaste en autorizar
+            return time.perf_counter() - t0 - (getattr(self.keys, "ask_wait_s", 0.0) - w0)
+
         self.pipe.begin()
         self.out("POETA: ", end="", flush=True)
 
         async def consume() -> None:
             async for ev in self.agent.respond(text):
                 if ev.kind == "reasoning" and first["reason"] is None:
-                    first["reason"] = time.perf_counter() - t0
+                    first["reason"] = since_start()
                 elif ev.kind == "text":
                     if first["text"] is None:
-                        first["text"] = time.perf_counter() - t0
+                        first["text"] = since_start()
                     self.out(ev.text, end="", flush=True)
                     self.pipe.feed(ev.text)
             self.pipe.end()
@@ -224,10 +291,13 @@ class VoiceLoop:
         parts = []
         if stt_s is not None:
             parts.append(f"stt {stt_s:.2f}s")
+        waited = getattr(self.keys, "ask_wait_s", 0.0) - w0
+        if waited > 0:
+            parts.append(f"autorizacion {waited:.1f}s (excluida)")
         if first["reason"] is not None:
             parts.append(f"razonando desde {first['reason']:.2f}s")
         if first["text"] is not None:
             parts.append(f"1er texto {first['text']:.2f}s")
         if self.pipe.first_audio_s is not None:
-            parts.append(f"1er audio {self.pipe.first_audio_s:.2f}s")
+            parts.append(f"1er audio {max(0.0, self.pipe.first_audio_s - waited):.2f}s")
         self.out("\n[" + " | ".join(parts) + "]\n" if parts else "\n")

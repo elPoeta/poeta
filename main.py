@@ -2,7 +2,7 @@
 
   python main.py                        Carga y valida la configuracion.
   python main.py chat [--continue]      Chat de texto en streaming (--continue retoma la ultima conversacion).
-  python main.py voice [--always]       Conversacion por voz (Enter para hablar; Enter interrumpe).
+  python main.py voice [--wake|--always]  Conversacion por voz (Enter para hablar; Enter interrumpe).
   python main.py audit [--verify]       Muestra o verifica el registro de auditoria.
   python main.py memory stats|export ARCHIVO|wipe   Administra la memoria.
 """
@@ -243,13 +243,15 @@ async def chat(cfg: dict, provider: str | None, model: str | None, resume_last: 
             print("Aviso: la memoria fallo y esta conversacion puede no haberse guardado (ver logs/poeta.log).\n")
 
 
-async def voice(cfg: dict, provider: str | None, model: str | None, resume_last: bool, always: bool) -> int:
+async def voice(cfg: dict, provider: str | None, model: str | None, resume_last: bool, always: bool,
+                wake: bool = False) -> int:
     import time
 
     from poeta.voice.audio import AudioConfig, AudioError, AudioManager
     from poeta.voice.loop import LineQueue, VoiceLoop
     from poeta.voice.stt import SttConfig, SttError, Transcriber
     from poeta.voice.tts import SpeechPipeline, TtsConfig, TtsError, make_engine
+    from poeta.voice.wake import TranscriptWake, WakeConfig, make_chime
 
     keys = LineQueue()  # unico lector de teclado: tambien responde las confirmaciones de permisos
     built = build_agent(cfg, provider, model, confirmer=make_cli_confirmer(keys.ask))
@@ -266,10 +268,19 @@ async def voice(cfg: dict, provider: str | None, model: str | None, resume_last:
         await asyncio.to_thread(stt.load)
         await asyncio.to_thread(stt.warmup)
         await asyncio.to_thread(engine.synthesize, "Listo.")
+        detector = None
+        wcfg = None
+        if wake:
+            wcfg = WakeConfig.from_config(cfg)
+            detector = TranscriptWake(wcfg, Transcriber(SttConfig(
+                model=wcfg.stt_model, device=wcfg.stt_device, compute_type=wcfg.stt_compute_type,
+                language=stt.config.language, download_root=stt.config.download_root)))
+            print(f"Cargando detector de '{wcfg.phrase}' ({wcfg.stt_model}, {wcfg.stt_device})...", flush=True)
+            await asyncio.to_thread(detector.load)
         audio = AudioManager(AudioConfig.from_config(cfg))
         audio.start()
         print(f"Voz lista en {time.perf_counter() - t0:.1f} s.")
-    except (SttError, TtsError, AudioError) as exc:
+    except (SttError, TtsError, AudioError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         if audio is not None:
             audio.stop()
@@ -289,7 +300,9 @@ async def voice(cfg: dict, provider: str | None, model: str | None, resume_last:
         return await run_command(line, router, agent)
 
     loop = VoiceLoop(audio=audio, stt=stt, pipeline=pipe, agent=agent, keys=keys,
-                     mode="always" if always else "ptt", on_command=on_command)
+                     mode="wake" if wake else ("always" if always else "ptt"),
+                     wake=detector, followup_s=wcfg.followup_s if wcfg else 8.0,
+                     chime=(make_chime(), 24000) if wcfg and wcfg.chime else None, on_command=on_command)
     try:
         return await loop.run()
     finally:
@@ -373,8 +386,11 @@ def main() -> int:
     voice_p.add_argument("--provider", help="Proveedor (por defecto, el de providers.yaml)")
     voice_p.add_argument("--model", help="Modelo")
     voice_p.add_argument("--continue", dest="resume_last", action="store_true", help="Retoma la ultima conversacion")
-    voice_p.add_argument("--always", action="store_true",
-                         help="Escucha continuamente, sin palabra de activacion (todo se transcribe localmente)")
+    mode_g = voice_p.add_mutually_exclusive_group()
+    mode_g.add_argument("--wake", action="store_true",
+                        help="Manos libres: solo responde cuando empiezas con 'poeta' (lo demas se descarta)")
+    mode_g.add_argument("--always", action="store_true",
+                        help="Escucha continuamente, sin palabra de activacion (todo se transcribe localmente)")
     audit_p = sub.add_parser("audit", help="Registro de auditoria")
     audit_p.add_argument("--verify", action="store_true", help="Verificar la integridad de la cadena de hashes")
     audit_p.add_argument("--tail", type=int, default=20, help="Cuantos eventos mostrar (por defecto 20)")
@@ -403,7 +419,7 @@ def main() -> int:
     if args.command == "chat":
         return asyncio.run(chat(cfg, args.provider, args.model, args.resume_last))
     if args.command == "voice":
-        return asyncio.run(voice(cfg, args.provider, args.model, args.resume_last, args.always))
+        return asyncio.run(voice(cfg, args.provider, args.model, args.resume_last, args.always, args.wake))
     if args.command == "audit":
         return audit_cmd(cfg, args.verify, args.tail)
     if args.command == "memory":

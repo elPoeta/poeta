@@ -114,3 +114,12 @@ Enter mientras POETA habla la interrumpe. Tras cada turno se muestran las latenc
 muestra `Aviso de permisos: ... Recomendado: N` y deja constancia en la auditoría (`permissions_relaxed`).
 Siguen rechazándose los errores de forma y `privileged` (siempre `never`). En modo voz, las confirmaciones se responden
 escribiendo en la misma terminal (la respuesta no interrumpe a POETA).
+
+### Manos libres con "poeta" (Fase 4e)
+
+    python main.py voice --wake
+
+Cada enunciado se transcribe en CPU con un Whisper pequeño (`wake_word.stt_model`, por defecto `base`) y solo cuenta si empieza
+con "poeta"; lo demás se descarta al instante (no llega al LLM, a la memoria ni a disco). Si dices solo "poeta", suena un tono y
+espera tu orden. Limitación: es una aproximación; cualquier frase que empiece con "poeta" activa, y la detección tarda lo que tarda
+el STT pequeño. Un modelo openWakeWord propio (más liviano y preciso) queda pendiente.

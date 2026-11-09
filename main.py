@@ -2,6 +2,7 @@
 
   python main.py                        Carga y valida la configuracion.
   python main.py chat [--continue]      Chat de texto en streaming (--continue retoma la ultima conversacion).
+  python main.py voice [--wake|--always]  Conversacion por voz (Enter para hablar; Enter interrumpe).
   python main.py audit [--verify]       Muestra o verifica el registro de auditoria.
   python main.py memory stats|export ARCHIVO|wipe   Administra la memoria.
 """
@@ -11,6 +12,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -18,7 +20,7 @@ from typing import Any
 from poeta.config import PROJECT_ROOT, ConfigError, assistant_name, load_config, system_prompt
 from poeta.core import AgentCore
 from poeta.envfile import load_env_file
-from poeta.interface import cli_confirmer
+from poeta.interface import cli_confirmer, make_cli_confirmer
 from poeta.logging_setup import setup_logging
 from poeta.memory import KINDS, MemoryStore, MemoryStoreError
 from poeta.models import ModelRouter, RouterError
@@ -155,20 +157,35 @@ def _memory_command(cmd: str, arg: str, agent: AgentCore, memory: MemoryStore) -
         print(f"Retomada la conversacion #{arg} ({n} mensajes cargados).")
 
 
-async def chat(cfg: dict, provider: str | None, model: str | None, resume_last: bool = False) -> int:
+def announce_permission_warnings(permissions: PermissionManager, audit: AuditLog | None) -> None:
+    """Los ajustes mas permisivos que lo recomendado se permiten, pero nunca en silencio."""
+    if not permissions.warnings:
+        return
+    for w in permissions.warnings:
+        print(f"Aviso de permisos: {w}", file=sys.stderr)
+    logging.getLogger("poeta").warning("permisos relajados", extra={"avisos": len(permissions.warnings)})
+    if audit is not None:
+        try:
+            audit.record("permissions_relaxed", warnings=permissions.warnings)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def build_agent(cfg: dict, provider: str | None, model: str | None, confirmer=None):
+    """Crea auditoria, permisos, router, memoria y agente. Devuelve (router, agent, memory) o None."""
     try:
         audit = AuditLog.from_config(cfg, PROJECT_ROOT)
     except AuditError as exc:
         print(f"Error: {exc}", file=sys.stderr)
-        return 1
-    permissions = PermissionManager(cfg, confirmer=cli_confirmer, audit=audit, root=PROJECT_ROOT)
+        return None
+    permissions = PermissionManager(cfg, confirmer=confirmer or cli_confirmer, audit=audit, root=PROJECT_ROOT)
+    announce_permission_warnings(permissions, audit)
     router = ModelRouter(cfg, permissions=permissions)
     try:
         router.select(provider, model)
     except RouterError as exc:
         print(f"Error: {exc}", file=sys.stderr)
-        return 1
-
+        return None
     memory = open_memory(cfg, audit)
     agent_cfg = cfg["settings"].get("agent", {})
     agent = AgentCore(
@@ -178,6 +195,14 @@ async def chat(cfg: dict, provider: str | None, model: str | None, resume_last: 
         memory=memory,
         memory_cfg=cfg["memory"],
     )
+    return router, agent, memory
+
+
+async def chat(cfg: dict, provider: str | None, model: str | None, resume_last: bool = False) -> int:
+    built = build_agent(cfg, provider, model)
+    if built is None:
+        return 1
+    router, agent, memory = built
 
     st = router.status()
     print(f"{assistant_name(cfg)} listo. Proveedor: {st['provider']}  Modelo: {st['model']}")
@@ -216,6 +241,73 @@ async def chat(cfg: dict, provider: str | None, model: str | None, resume_last: 
         if agent.memory_errors and not warned:
             warned = True
             print("Aviso: la memoria fallo y esta conversacion puede no haberse guardado (ver logs/poeta.log).\n")
+
+
+async def voice(cfg: dict, provider: str | None, model: str | None, resume_last: bool, always: bool,
+                wake: bool = False) -> int:
+    import time
+
+    from poeta.voice.audio import AudioConfig, AudioError, AudioManager
+    from poeta.voice.loop import LineQueue, VoiceLoop
+    from poeta.voice.stt import SttConfig, SttError, Transcriber
+    from poeta.voice.tts import SpeechPipeline, TtsConfig, TtsError, make_engine
+    from poeta.voice.wake import TranscriptWake, WakeConfig, make_chime
+
+    keys = LineQueue()  # unico lector de teclado: tambien responde las confirmaciones de permisos
+    built = build_agent(cfg, provider, model, confirmer=make_cli_confirmer(keys.ask))
+    if built is None:
+        return 1
+    router, agent, memory = built
+    audio = None
+    pipe = None
+    try:
+        t0 = time.perf_counter()
+        stt = Transcriber(SttConfig.from_config(cfg))
+        engine = make_engine(TtsConfig.from_config(cfg))
+        print(f"Cargando voz (STT {stt.config.model}, TTS {engine.__class__.__name__})...", flush=True)
+        await asyncio.to_thread(stt.load)
+        await asyncio.to_thread(stt.warmup)
+        await asyncio.to_thread(engine.synthesize, "Listo.")
+        detector = None
+        wcfg = None
+        if wake:
+            wcfg = WakeConfig.from_config(cfg)
+            detector = TranscriptWake(wcfg, Transcriber(SttConfig(
+                model=wcfg.stt_model, device=wcfg.stt_device, compute_type=wcfg.stt_compute_type,
+                language=stt.config.language, download_root=stt.config.download_root)))
+            print(f"Cargando detector de '{wcfg.phrase}' ({wcfg.stt_model}, {wcfg.stt_device})...", flush=True)
+            await asyncio.to_thread(detector.load)
+        audio = AudioManager(AudioConfig.from_config(cfg))
+        audio.start()
+        print(f"Voz lista en {time.perf_counter() - t0:.1f} s.")
+    except (SttError, TtsError, AudioError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        if audio is not None:
+            audio.stop()
+        return 1
+    pipe = SpeechPipeline(engine, audio, on_error=lambda e: print(f"\n(error de voz: {e})"))
+
+    st = router.status()
+    print(f"{assistant_name(cfg)} listo por voz. Proveedor: {st['provider']}  Modelo: {st['model']}")
+    if resume_last and memory is not None:
+        last = memory.last_conversation_id()
+        if last is not None:
+            print(f"Retomada la conversacion #{last} ({agent.resume(last)} mensajes cargados).")
+
+    keys.start_stdin_reader(sys.stdin)
+
+    async def on_command(line: str) -> bool:
+        return await run_command(line, router, agent)
+
+    loop = VoiceLoop(audio=audio, stt=stt, pipeline=pipe, agent=agent, keys=keys,
+                     mode="wake" if wake else ("always" if always else "ptt"),
+                     wake=detector, followup_s=wcfg.followup_s if wcfg else 8.0,
+                     chime=(make_chime(), 24000) if wcfg and wcfg.chime else None, on_command=on_command)
+    try:
+        return await loop.run()
+    finally:
+        pipe.close()
+        audio.stop()
 
 
 def audit_cmd(cfg: dict, verify: bool, tail: int) -> int:
@@ -290,6 +382,15 @@ def main() -> int:
     chat_p.add_argument("--provider", help="Proveedor (por defecto, el de providers.yaml)")
     chat_p.add_argument("--model", help="Modelo")
     chat_p.add_argument("--continue", dest="resume_last", action="store_true", help="Retoma la ultima conversacion guardada")
+    voice_p = sub.add_parser("voice", help="Conversacion por voz (Enter para hablar)")
+    voice_p.add_argument("--provider", help="Proveedor (por defecto, el de providers.yaml)")
+    voice_p.add_argument("--model", help="Modelo")
+    voice_p.add_argument("--continue", dest="resume_last", action="store_true", help="Retoma la ultima conversacion")
+    mode_g = voice_p.add_mutually_exclusive_group()
+    mode_g.add_argument("--wake", action="store_true",
+                        help="Manos libres: solo responde cuando empiezas con 'poeta' (lo demas se descarta)")
+    mode_g.add_argument("--always", action="store_true",
+                        help="Escucha continuamente, sin palabra de activacion (todo se transcribe localmente)")
     audit_p = sub.add_parser("audit", help="Registro de auditoria")
     audit_p.add_argument("--verify", action="store_true", help="Verificar la integridad de la cadena de hashes")
     audit_p.add_argument("--tail", type=int, default=20, help="Cuantos eventos mostrar (por defecto 20)")
@@ -317,6 +418,8 @@ def main() -> int:
 
     if args.command == "chat":
         return asyncio.run(chat(cfg, args.provider, args.model, args.resume_last))
+    if args.command == "voice":
+        return asyncio.run(voice(cfg, args.provider, args.model, args.resume_last, args.always, args.wake))
     if args.command == "audit":
         return audit_cmd(cfg, args.verify, args.tail)
     if args.command == "memory":

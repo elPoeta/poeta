@@ -46,7 +46,7 @@ def test_defaults_match_vozboard():
 def test_from_project_config(monkeypatch):
     monkeypatch.setenv("AI_MODELS", "/data/models")
     c = SttConfig.from_config(load_config())
-    assert (c.model, c.device, c.effective_compute_type, c.language) == ("large-v3-turbo", "cuda", "int8_float16", "es")
+    assert (c.model, c.device, c.effective_compute_type, c.language) == ("large-v3-turbo", "auto", "int8_float16", "es")
     assert c.download_root == "/data/models/whisper"
 
 
@@ -166,3 +166,22 @@ def test_transcribe_passes_array_for_wav(tmp_path):
     m.write_bytes(b"x")
     tr.transcribe(m)
     assert isinstance(h["m"].calls[1][0], str)
+
+
+def test_warmup_runs_encoder_without_vad():
+    tr, h = make()
+    tr.warmup()
+    audio, kw = h["m"].calls[0]
+    assert kw["vad_filter"] is False and len(audio) == 32000
+
+
+def test_resolve_device_auto_and_cpu_precision():
+    from poeta.voice.stt import resolve_device
+
+    c = SttConfig(device="auto", compute_type="int8_float16")
+    assert resolve_device(c, 1) == ("cuda", "int8_float16")
+    assert resolve_device(c, 0) == ("cpu", "int8")  # sin GPU: no pedir precision de GPU
+    assert resolve_device(SttConfig(device="cpu", compute_type="float16"), 0) == ("cpu", "int8")
+    assert resolve_device(SttConfig(device="cpu", compute_type="int8_float32"), 0) == ("cpu", "int8_float32")
+    assert resolve_device(SttConfig(device="cuda", compute_type="float16"), 0) == ("cuda", "float16")
+    assert resolve_device(SttConfig(device="auto"), 0) == ("cpu", "int8")

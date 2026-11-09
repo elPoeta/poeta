@@ -1,9 +1,11 @@
 # Permisos y privacidad (secc. 7.1, 10.3, 12.2, 19).
-# Invariantes validados al cargar (poeta/security/permissions.py, validate_config):
-#   - cloud.require_confirmation = true
-#   - el nivel 3 nunca es auto; el nivel 4 siempre es confirm_explicit
-#   - actions.privileged = never
-#   - modify_file, run_command, install_package y cloud_transfer no bajan del nivel 3; delete_data no baja del 4
+# Todo es configurable: es tu equipo. Si bajas un nivel por debajo de lo recomendado, POETA arranca igual
+# pero muestra un AVISO con el nivel sugerido, lo registra en logs y en la auditoria (permissions_relaxed).
+# Recomendados: nivel 3 = confirm; nivel 4 = confirm_explicit; cloud.require_confirmation = true;
+#   modify_file / run_command / install_package / cloud_transfer >= 3; delete_data = 4.
+# Lo unico que se rechaza: errores de forma (politica o nivel inexistente), y `privileged`, que siempre es never
+#   (operaciones con privilegios de administrador: no existe forma de automatizarlas).
+# Aunque desactives la confirmacion cloud, el contenido con imagenes o audio siempre exige confirmacion explicita.
 # Una accion que no figura en `actions` se deniega.
 
 cloud:

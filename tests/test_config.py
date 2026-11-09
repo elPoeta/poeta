@@ -69,8 +69,10 @@ def test_cloud_provider_cannot_embed_api_key(cfg_dir):
         load_config(cfg_dir)
 
 
-def test_cloud_confirmation_cannot_be_disabled(cfg_dir):
+def test_cloud_confirmation_can_be_disabled_but_must_be_a_bool(cfg_dir):
     edit(cfg_dir, "permissions", lambda d: d["cloud"].update(require_confirmation=False))
+    assert load_config(cfg_dir)["permissions"]["cloud"]["require_confirmation"] is False  # se avisa al arrancar
+    edit(cfg_dir, "permissions", lambda d: d["cloud"].update(require_confirmation="no"))
     with pytest.raises(ConfigError, match="require_confirmation"):
         load_config(cfg_dir)
 

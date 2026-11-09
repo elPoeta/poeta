@@ -1,10 +1,23 @@
-# Audio Manager (secc. 8.4 y 8.6). Backend: PipeWire.
+# Audio Manager (secc. 8.4 y 8.6). Backend: PipeWire (via sounddevice/PortAudio).
 
 backend: pipewire
-input_device: null          # null = predeterminado del sistema
+input_device: null          # null = predeterminado del sistema; nombre (subcadena) o indice
 output_device: null
 sample_rate: 16000          # captura para STT / wake word
+frame_ms: 30
 vad:
   enabled: true
+  engine: energy            # energia con piso de ruido adaptativo (Whisper ya aplica su propio VAD)
+  margin_db: 12             # cuanto por encima del ruido de fondo cuenta como voz
+  min_level_db: -50         # por debajo de esto nunca es voz (dBFS)
+  start_ms: 90              # voz sostenida necesaria para abrir un enunciado
+  min_speech_ms: 250        # enunciados mas cortos se descartan (ruidos, golpes)
+  end_silence_ms: 700       # silencio que cierra el enunciado
+  preroll_ms: 300           # audio previo conservado (para no cortar la primera silaba)
+  max_utterance_s: 30
+  noise_window_s: 5         # ventana para estimar el ruido de fondo (sigue a TV, ventilador, calle)
 echo_cancel:
-  strategy: null            # aec (module-echo-cancel) | mute_during_playback; decidir en Fase 4
+  # mute_during_playback: el microfono se ignora mientras POETA habla (mic interno + parlantes).
+  # none: no se silencia (auriculares, o input_device = fuente de module-echo-cancel); permite interrumpir.
+  strategy: mute_during_playback
+  tail_ms: 300              # silencio extra tras terminar de hablar (cola de eco)

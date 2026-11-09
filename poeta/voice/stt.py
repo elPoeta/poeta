@@ -115,6 +115,29 @@ class Transcription:
         return self.duration / self.elapsed if self.elapsed > 0 else None
 
 
+CUDA_ONLY_COMPUTE = ("float16", "int8_float16", "bfloat16")
+
+
+def resolve_device(cfg: SttConfig, cuda_count: int) -> tuple[str, str]:
+    """(dispositivo, precision) efectivos. 'auto' usa CUDA solo si hay GPU visible;
+    en CPU las precisiones exclusivas de GPU se cambian por int8."""
+    device = cfg.device
+    if device == "auto":
+        device = "cuda" if cuda_count > 0 else "cpu"
+    compute = cfg.compute_type
+    if device == "cpu" and (compute is None or compute in CUDA_ONLY_COMPUTE):
+        compute = "int8"
+    return device, compute or cfg.effective_compute_type
+
+
+def _cuda_count() -> int:
+    try:
+        import ctranslate2
+        return int(ctranslate2.get_cuda_device_count())
+    except Exception:
+        return 0
+
+
 def _default_factory(cfg: SttConfig) -> Any:
     from .cuda_env import patch_cuda_libs
 
@@ -130,8 +153,8 @@ def _default_factory(cfg: SttConfig) -> Any:
     kwargs: dict[str, Any] = {}
     if cfg.download_root:
         kwargs["download_root"] = cfg.download_root
-    return WhisperModel(cfg.model, device=cfg.device,
-                        compute_type=cfg.effective_compute_type, **kwargs)
+    device, compute = resolve_device(cfg, _cuda_count() if cfg.device == "auto" else 0)
+    return WhisperModel(cfg.model, device=device, compute_type=compute, **kwargs)
 
 
 class Transcriber:
@@ -159,6 +182,23 @@ class Transcriber:
                 raise SttError(f"No se pudo cargar {self.config.model} en "
                                f"{self.config.device}/{self.config.effective_compute_type}: {e}") from e
             self.load_seconds = time.perf_counter() - t0
+
+    def warmup(self) -> None:
+        """Fuerza una pasada real del codificador (sin VAD) para inicializar CUDA/kernels.
+
+        Una prueba con silencio no sirve: el filtro VAD lo descarta antes de llegar al modelo.
+        """
+        import numpy as np
+
+        self.load()
+        rng = np.random.default_rng(0)
+        noise = (rng.standard_normal(SAMPLE_RATE * 2) * 0.01).astype(np.float32)
+        try:
+            raw, _ = self._model.transcribe(noise, language=self.config.language,
+                                            beam_size=1, vad_filter=False)
+            list(raw)
+        except Exception as e:
+            raise SttError(f"Fallo en el calentamiento: {e}") from e
 
     def transcribe(self, audio: Any, language: str | None | object = ...,
                    initial_prompt: str | None = None) -> Transcription:

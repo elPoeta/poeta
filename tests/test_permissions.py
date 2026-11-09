@@ -300,20 +300,69 @@ def edit_perm(tmp_path, fn):
 @pytest.mark.parametrize(
     "mutation, expected",
     [
-        (lambda d: d["risk_levels"][3].update(policy="auto"), "risk_levels.3"),
-        (lambda d: d["risk_levels"][4].update(policy="confirm"), "risk_levels.4"),
         (lambda d: d["risk_levels"][1].update(policy="quizas"), "risk_levels.1"),
         (lambda d: d["never_automatic"].clear(), "never_automatic"),
         (lambda d: d["actions"].update(privileged=2), "actions.privileged"),
+        (lambda d: d["actions"].update(open_app=9), "actions.open_app"),
+        (lambda d: d["cloud"].update(require_confirmation="si"), "require_confirmation"),
+    ],
+)
+def test_structural_errors_are_still_rejected(tmp_path, mutation, expected):
+    with pytest.raises(ConfigError, match=expected):
+        load_config(edit_perm(tmp_path, mutation))
+
+
+@pytest.mark.parametrize(
+    "mutation, expected",
+    [
+        (lambda d: d["risk_levels"][3].update(policy="auto"), "risk_levels.3.policy"),
+        (lambda d: d["risk_levels"][4].update(policy="confirm"), "risk_levels.4.policy"),
         (lambda d: d["actions"].update(delete_data=3), "actions.delete_data"),
         (lambda d: d["actions"].update(modify_file=1), "actions.modify_file"),
         (lambda d: d["actions"].update(cloud_transfer=2), "actions.cloud_transfer"),
-        (lambda d: d["actions"].update(open_app=9), "actions.open_app"),
+        (lambda d: d["cloud"].update(require_confirmation=False), "cloud.require_confirmation"),
     ],
 )
-def test_unsafe_permission_config_is_rejected(tmp_path, mutation, expected):
-    with pytest.raises(ConfigError, match=expected):
-        load_config(edit_perm(tmp_path, mutation))
+def test_relaxed_settings_are_allowed_with_a_warning_that_suggests_the_level(tmp_path, mutation, expected):
+    cfg = load_config(edit_perm(tmp_path, mutation))  # ya no se rechaza
+    pm = PermissionManager(cfg, root=tmp_path)
+    hit = [w for w in pm.warnings if w.startswith(expected)]
+    assert hit and "Recomendado" in hit[0]
+
+
+def test_default_config_has_no_warnings(tmp_path):
+    assert PermissionManager(load_config(), root=tmp_path).warnings == []
+
+
+def test_relaxed_levels_take_effect(tmp_path):
+    cfg = load_config(edit_perm(tmp_path, lambda d: d["actions"].update(modify_file=1)))
+    (tmp_path / "workspace").mkdir()
+    pm = PermissionManager(cfg, root=tmp_path)  # sin confirmer: solo pasa si es automatico
+    d = asyncio.run(pm.check(ActionRequest("modify_file", "x", {"path": str(tmp_path / "workspace" / "a.txt")})))
+    assert d.allowed and d.level == 1
+
+
+def test_cloud_confirmation_disabled_sends_without_asking_but_audits(tmp_path):
+    cfg = load_config(edit_perm(tmp_path, lambda d: d["cloud"].update(require_confirmation=False)))
+    asker = Asker(False)  # si preguntara, diria que no
+    audit = AuditLog(tmp_path / "audit.jsonl")
+    pm = PermissionManager(cfg, confirmer=asker, audit=audit, root=tmp_path)
+    req = ActionRequest("cloud_transfer", "enviar", payload={"messages": [{"role": "user", "content": "hola"}]})
+    d = asyncio.run(pm.check(req))
+    assert d.allowed and asker.calls == []
+    from poeta.security import read_tail
+
+    ev = [e for e in read_tail(tmp_path / "audit.jsonl", 10) if e["event"] == "permission_decided"]
+    assert ev and ev[-1]["kind"] == "cloud_transfer" and ev[-1]["allowed"] is True and ev[-1]["digest"]
+
+
+def test_media_still_requires_explicit_even_if_confirmation_disabled(tmp_path):
+    cfg = load_config(edit_perm(tmp_path, lambda d: d["cloud"].update(require_confirmation=False)))
+    asker = Asker(True)
+    pm = PermissionManager(cfg, confirmer=asker, root=tmp_path)
+    img = {"type": "image_url", "image_url": {"url": "data:..."}}
+    req = ActionRequest("cloud_transfer", "enviar", payload={"messages": [{"role": "user", "content": [img]}]})
+    assert asyncio.run(pm.check(req)).allowed and asker.calls == [("cloud_transfer", True)]
 
 
 def test_stricter_config_is_allowed(tmp_path):

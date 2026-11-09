@@ -179,3 +179,14 @@ def test_default_permissions_start_silently(tmp_path, capsys):
 
     poeta_main.announce_permission_warnings(PermissionManager(load_config(), root=tmp_path), None)
     assert capsys.readouterr().err == ""
+
+
+def test_tool_cmd_runs_tool_without_model(capsys):
+    import asyncio
+    import main as poeta_main
+    from poeta.config import load_config
+    rc = asyncio.run(poeta_main.tool_cmd(load_config(), "get_datetime", None))
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("[ok]")
+    assert asyncio.run(poeta_main.tool_cmd(load_config(), "no_existe", None)) == 1
+    assert "[ERROR]" in capsys.readouterr().out

@@ -1,0 +1,29 @@
+# Automatizacion del escritorio (secc. 12). Cada herramienta usa una utilidad estandar y solo se registra si esta instalada:
+#   notify -> notify-send (libnotify) | media_* -> playerctl | volumen -> wpctl (WirePlumber)
+#   ventanas -> kdotool (KWin/Wayland; sudo dnf install kdotool) | servicios -> systemctl --user | procesos -> ps
+# Cada accion tiene su nivel en permissions.yaml (desktop_*, window_control, service_*, process_*, run_automation).
+
+enabled: true
+timeout_s: 10
+
+tools:
+  notify: true
+  media_status: true
+  media_control: true
+  get_volume: true
+  set_volume: true
+  list_windows: true
+  window_action: true
+  service_status: true
+  service_control: true
+  list_processes: true
+  stop_process: true
+
+audio:
+  max_volume_percent: 100       # tope para set_volume (hasta 150)
+
+services:
+  allowlist: []                 # unidades de usuario que se pueden iniciar/detener, ej: [llama-server.service]
+
+processes:
+  max_listed: 25

@@ -51,6 +51,15 @@ actions:
   mcp_browse: 2               # herramientas MCP de navegacion o busqueda
   mcp_write: 3                # herramientas MCP que modifican algo (valor por defecto de un servidor)
   mcp_sensitive: 4            # herramientas MCP sensibles o irreversibles
+  desktop_notify: 1  # mostrar una notificacion
+  desktop_read: 1  # leer volumen, reproductores, ventanas
+  desktop_control: 2  # volumen y multimedia
+  window_control: 3  # traer al frente, minimizar o cerrar ventanas
+  service_read: 1  # estado de servicios de usuario
+  service_control: 3  # iniciar/detener servicios (ademas: desktop.services.allowlist)
+  process_read: 1  # listar procesos propios
+  process_stop: 3  # pedir a un proceso propio que termine (SIGTERM)
+  run_automation: 3  # ejecutar una rutina de config/automations.yaml
   privileged: never
   camera_capture: 2
 

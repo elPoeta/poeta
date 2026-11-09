@@ -194,6 +194,15 @@ def main() -> int:
     except OSError:
         record("FAIL", "audio (PortAudio)", "falta la libreria del sistema: sudo dnf install portaudio")
 
+    # MCP: SDK y servidores habilitados
+    try:
+        from poeta.mcp import McpConfig
+        mc = McpConfig.from_config(cfg)
+        on = [n for n in mc.servers if mc.eligible(n)]
+        record("OK", "servidores MCP", f"{len(on)} habilitados y autorizados" + (f": {', '.join(on)}" if on else ""))
+    except Exception as exc:  # noqa: BLE001
+        record("FAIL", "servidores MCP", str(exc))
+
     width = max(len(name) for _, name, _ in results)
     for level, name, detail in results:
         print(f"[{level:<4}] {name:<{width}}  {detail}")

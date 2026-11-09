@@ -5,6 +5,7 @@
   python main.py voice [--wake|--always]  Conversacion por voz (Enter para hablar; Enter interrumpe).
   python main.py audit [--verify]       Muestra o verifica el registro de auditoria.
   python main.py memory stats|export ARCHIVO|wipe   Administra la memoria.
+  python main.py mcp list|approve NOMBRE   Servidores MCP: ver sus herramientas y aprobarlos.
 """
 
 from __future__ import annotations
@@ -25,6 +26,8 @@ from poeta.logging_setup import setup_logging
 from poeta.memory import KINDS, MemoryStore, MemoryStoreError
 from poeta.models import ModelRouter, RouterError
 from poeta.providers import ProviderError
+from poeta.tools import ToolRegistry, ToolsConfig, register_builtin
+from poeta.mcp import McpConfig, McpManager
 from poeta.security import AuditError, AuditLog, PermissionManager, audit_path, read_tail, verify_chain
 
 HELP = """Comandos:
@@ -37,6 +40,7 @@ HELP = """Comandos:
   /forget ID                Olvida una nota
   /prefer CLAVE=VALOR       Guarda una preferencia (sin argumentos: las lista)
   /unprefer CLAVE           Borra una preferencia
+  /tools                    Herramientas disponibles (integradas y MCP)
   /conversations            Lista las conversaciones guardadas
   /resume ID                Retoma una conversacion
   /incognito                Activa o desactiva el guardado de esta sesion
@@ -73,6 +77,12 @@ async def run_command(line: str, router: ModelRouter, agent: AgentCore) -> bool:
         return True
     if cmd == "/help":
         print(HELP)
+    elif cmd == "/tools":
+        reg = agent.tools
+        if reg is None or not reg.names():
+            print("No hay herramientas habilitadas.")
+        for t in (reg.tools() if reg else []):
+            print(f"  {t.name:<28} {t.source:<14} {t.description[:70]}")
     elif cmd == "/status":
         status = dict(router.status())
         status["memoria"] = (
@@ -188,14 +198,50 @@ def build_agent(cfg: dict, provider: str | None, model: str | None, confirmer=No
         return None
     memory = open_memory(cfg, audit)
     agent_cfg = cfg["settings"].get("agent", {})
+    tools_cfg = ToolsConfig.from_config(cfg)
+    registry = None
+    mcp = None
+    if tools_cfg.enabled:
+        registry = ToolRegistry(permissions, tools_cfg.max_output_chars, tools_cfg.timeout_s)
+        register_builtin(registry, tools_cfg, PROJECT_ROOT)
+        mcp = McpManager(McpConfig.from_config(cfg), registry, PROJECT_ROOT, audit)
     agent = AgentCore(
         router,
         system_prompt=system_prompt(cfg),
         max_history=int(agent_cfg.get("max_history_messages", 40)),
         memory=memory,
         memory_cfg=cfg["memory"],
+        tools=registry,
+        max_tool_rounds=tools_cfg.max_tool_rounds,
     )
+    agent.mcp = mcp  # se inicia/detiene con start_mcp/stop_mcp
     return router, agent, memory
+
+
+async def start_mcp(agent: AgentCore) -> None:
+    """Conecta los servidores MCP autorizados y aprobados; informa de los omitidos."""
+    mcp = getattr(agent, "mcp", None)
+    if mcp is None:
+        return
+    for st in await mcp.start():
+        if st.state == "conectado":
+            print(f"MCP {st.name}: {len(st.tools)} herramientas")
+        elif st.state in {"omitido", "error"}:
+            print(f"MCP {st.name}: {st.state}. {st.detail}")
+
+
+async def stop_mcp(agent: AgentCore) -> None:
+    mcp = getattr(agent, "mcp", None)
+    if mcp is not None:
+        await mcp.stop()
+
+
+def show_tool_event(ev, out=print) -> None:
+    if ev.kind == "tool_start" and ev.tool_calls:
+        out(f"\n[herramienta: {', '.join(t.name for t in ev.tool_calls)}]")
+    elif ev.kind == "tool_result" and ev.result is not None:
+        r = ev.result
+        out(f"[{r.name}: {'denegada' if r.denied else ('ok' if r.ok else 'error')}]")
 
 
 async def chat(cfg: dict, provider: str | None, model: str | None, resume_last: bool = False) -> int:
@@ -212,8 +258,16 @@ async def chat(cfg: dict, provider: str | None, model: str | None, resume_last: 
             print("No hay conversaciones guardadas; empiezo una nueva.")
         else:
             print(f"Retomada la conversacion #{last} ({agent.resume(last)} mensajes cargados).")
+    await start_mcp(agent)
     print("Escribe /help para ver los comandos.\n")
 
+    try:
+        return await _chat_loop(cfg, router, agent)
+    finally:
+        await stop_mcp(agent)
+
+
+async def _chat_loop(cfg: dict, router: ModelRouter, agent: AgentCore) -> int:
     warned = False
     while True:
         try:
@@ -233,8 +287,8 @@ async def chat(cfg: dict, provider: str | None, model: str | None, resume_last: 
             async for ev in agent.respond(line):
                 if ev.kind == "text":
                     print(ev.text, end="", flush=True)
-                elif ev.kind == "tool_calls":
-                    print(f"\n[el modelo pidio herramientas: {[t.name for t in ev.tool_calls]} (aun no se ejecutan)]")
+                else:
+                    show_tool_event(ev)
             print("\n")
         except (RouterError, ProviderError) as exc:
             print(f"\nError: {exc}\n")
@@ -294,6 +348,7 @@ async def voice(cfg: dict, provider: str | None, model: str | None, resume_last:
         if last is not None:
             print(f"Retomada la conversacion #{last} ({agent.resume(last)} mensajes cargados).")
 
+    await start_mcp(agent)
     keys.start_stdin_reader(sys.stdin)
 
     async def on_command(line: str) -> bool:
@@ -308,6 +363,7 @@ async def voice(cfg: dict, provider: str | None, model: str | None, resume_last:
     finally:
         pipe.close()
         audio.stop()
+        await stop_mcp(agent)
 
 
 def audit_cmd(cfg: dict, verify: bool, tail: int) -> int:
@@ -375,6 +431,51 @@ def memory_cmd(cfg: dict, action: str, target: str | None) -> int:
     return 2
 
 
+def mcp_cmd(cfg: dict, action: str, name: str | None) -> int:
+    try:
+        audit = AuditLog.from_config(cfg, PROJECT_ROOT)
+    except AuditError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    mcp_cfg = McpConfig.from_config(cfg)
+    mgr = McpManager(mcp_cfg, ToolRegistry(None, 1, 1), PROJECT_ROOT, audit)
+    if action == "list":
+        pins = mgr._pins()
+        if not mcp_cfg.servers:
+            print("No hay servidores definidos en config/mcp.yaml.")
+        for n, sc in mcp_cfg.servers.items():
+            estado = ("habilitado" if sc.enabled else "deshabilitado") + (", autorizado" if n in mcp_cfg.authorized else ", NO autorizado")
+            print(f"{n:<14} {estado}; riesgo por defecto: {sc.risk}; aprobado: {'si' if n in pins else 'no'}")
+        return 0
+    if not name or name not in mcp_cfg.servers:
+        print(f"Uso: python main.py mcp approve NOMBRE (servidores: {', '.join(mcp_cfg.servers) or 'ninguno'})", file=sys.stderr)
+        return 2
+    if not mcp_cfg.eligible(name):
+        print(f"'{name}' debe tener enabled: true y estar en authorized_servers de config/mcp.yaml.", file=sys.stderr)
+        return 1
+
+    async def inspect():
+        return await mgr.inspect(name)
+
+    try:
+        tools, fp = asyncio.run(inspect())
+    except Exception as exc:  # noqa: BLE001
+        print(f"No pude conectar con '{name}': {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    sc = mcp_cfg.servers[name]
+    print(f"Servidor '{name}' ({sc.command or sc.url}) expone {len(tools)} herramientas:")
+    for t in tools:
+        print(f"  - {t.name} [riesgo {sc.tool_risk.get(t.name, sc.risk)}]: {' '.join((t.description or '').split())[:100]}")
+    print(f"Huella: {fp[:16]}...\nEstas descripciones las escribio el servidor (codigo de terceros): no son instrucciones de confianza.")
+    if action == "approve":
+        if input("Escribe APROBAR para fijar esta huella: ").strip() != "APROBAR":
+            print("Cancelado.")
+            return 1
+        mgr.approve(name, fp, [t.name for t in tools])
+        print("Aprobado. Si el servidor cambia sus herramientas, se desactivara hasta aprobar de nuevo.")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="poeta")
     sub = parser.add_subparsers(dest="command")
@@ -397,6 +498,9 @@ def main() -> int:
     mem_p = sub.add_parser("memory", help="Administrar la memoria")
     mem_p.add_argument("action", choices=["stats", "export", "wipe"])
     mem_p.add_argument("target", nargs="?", help="Archivo de destino (solo export)")
+    mcp_p = sub.add_parser("mcp", help="Servidores MCP")
+    mcp_p.add_argument("action", choices=["list", "approve", "inspect"])
+    mcp_p.add_argument("name", nargs="?", help="Servidor (approve/inspect)")
     args = parser.parse_args()
 
     env = load_env_file(PROJECT_ROOT / ".env")  # antes de load_config: las rutas pueden usar variables del .env
@@ -422,6 +526,8 @@ def main() -> int:
         return asyncio.run(voice(cfg, args.provider, args.model, args.resume_last, args.always, args.wake))
     if args.command == "audit":
         return audit_cmd(cfg, args.verify, args.tail)
+    if args.command == "mcp":
+        return mcp_cmd(cfg, args.action, args.name)
     if args.command == "memory":
         return memory_cmd(cfg, args.action, args.target)
 

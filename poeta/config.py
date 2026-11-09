@@ -27,6 +27,7 @@ CONFIG_FILES = (
     "mcp",
     "permissions",
     "memory",
+    "tools",
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -95,6 +96,20 @@ def _validate(cfg: dict[str, dict[str, Any]]) -> None:
     for key, days in (mem.get("retention_days") or {}).items():
         if days is not None and (isinstance(days, bool) or not isinstance(days, int) or days < 1):
             raise ConfigError(f"memory.retention_days.{key} debe ser null o un entero positivo (dias).")
+
+    from poeta.tools import ToolsConfig, ToolsConfigError  # import tardio: evita ciclos
+
+    try:
+        ToolsConfig.from_config(cfg)
+    except ToolsConfigError as exc:
+        raise ConfigError(f"tools.yaml: {exc}") from exc
+
+    from poeta.mcp import McpConfig, McpConfigError
+
+    try:
+        McpConfig.from_config(cfg)
+    except McpConfigError as exc:
+        raise ConfigError(f"mcp.yaml: {exc}") from exc
 
     name = (cfg["settings"].get("assistant") or {}).get("name")
     if not isinstance(name, str) or not name.strip():

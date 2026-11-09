@@ -255,6 +255,12 @@ class VoiceLoop:
                         first["text"] = since_start()
                     self.out(ev.text, end="", flush=True)
                     self.pipe.feed(ev.text)
+                elif ev.kind == "tool_start" and ev.tool_calls:
+                    self.out(f"\n[herramienta: {', '.join(t.name for t in ev.tool_calls)}]\nPOETA: ", end="", flush=True)
+                elif ev.kind == "tool_result" and ev.result is not None:
+                    r = ev.result
+                    self.out(f"[{r.name}: {'denegada' if r.denied else ('ok' if r.ok else 'error')}]\nPOETA: ",
+                             end="", flush=True)
             self.pipe.end()
 
         task = asyncio.create_task(consume())

@@ -1,0 +1,28 @@
+[01] sintesis= 0.20s audio= 1.81s RTF= 0.11  Hola, ¿en qué puedo ayudarte?
+[02] sintesis= 0.20s audio= 1.75s RTF= 0.12  Listo, abrí el navegador.
+[03] sintesis= 0.29s audio= 2.60s RTF= 0.11  Son las cinco y cuarenta y siete de la tarde.
+[04] sintesis= 0.34s audio= 2.97s RTF= 0.11  Hoy es viernes, seis de noviembre de dos mil veint
+[05] sintesis= 0.36s audio= 3.61s RTF= 0.10  Tienes tres mensajes nuevos y una reunión a las nu
+[06] sintesis= 0.32s audio= 3.20s RTF= 0.10  La temperatura en Buenos Aires es de veintitrés gr
+[07] sintesis= 0.51s audio= 5.27s RTF= 0.10  El archivo pesa 2,5 gigabytes y tardará unos 15 mi
+[08] sintesis= 0.38s audio= 3.82s RTF= 0.10  Voy a iniciar llama.cpp con el modelo Nemotron en
+[09] sintesis= 0.36s audio= 3.50s RTF= 0.10  Instalé las dependencias con uv y creé el entorno
+[10] sintesis= 0.33s audio= 3.43s RTF= 0.10  El servidor MCP de Playwright está conectado y lis
+[11] sintesis= 0.37s audio= 3.80s RTF= 0.10  Wayland no permite controlar ventanas como lo hací
+[12] sintesis= 0.35s audio= 3.56s RTF= 0.10  No encontré ese archivo. ¿Quieres que lo busque en
+[13] sintesis= 0.47s audio= 5.06s RTF= 0.09  Necesito tu confirmación antes de enviar esta info
+[14] sintesis= 0.45s audio= 4.65s RTF= 0.10  Leonardo, ¿quieres que elimine los doce archivos t
+[15] sintesis= 0.95s audio= 9.92s RTF= 0.10  Según los resultados de la búsqueda, la nueva vers
+[16] sintesis= 0.23s audio= 2.13s RTF= 0.11  Perfecto. Cuando termine, te aviso.
+[17] sintesis= 0.42s audio= 3.78s RTF= 0.11  Hay un error de conexión: el puerto ocho mil ochen
+[18] sintesis= 0.41s audio= 4.29s RTF= 0.09  La reunión con el equipo de Córdoba fue reprograma
+
+=== Resumen: kokoro_em_alex ===
+Carga del motor:          0.69 s
+Síntesis media por frase: 0.39 s (p95 0.51 s)
+RTF medio:                0.102 (menor que 1 = más rápido que tiempo real)
+Memoria máxima (RSS):     659 MB
+WAV y CSV en:             /home/elpoeta/AI/output/tts_benchmark
+
+Siguiente paso: escuchar a ciegas y puntuar naturalidad, acento y pronunciación.
+

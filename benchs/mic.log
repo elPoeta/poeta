@@ -1,0 +1,15 @@
+Medidor (Ctrl+C para salir). Habla normal y luego calla para ver el ruido de fondo.
+ -22.6 dBFS  ruido~ -96.4  ############################            ^C
+
+ python scripts/mic_test.py listen -n 4 --no-stt
+Habla. Esperando 4 enunciado(s) (Ctrl+C para salir).
+[1]  5.2 s de audio, nivel -27.5 dBFS
+[2]  1.8 s de audio, nivel -22.9 dBFS
+[3]  2.8 s de audio, nivel -31.6 dBFS
+[4]  2.5 s de audio, nivel -31.8 dBFS
+
+Di una frase; POETA la repetira. Hace 3 rondas. Si oye su propia voz, lo indicara.
+  ronda 1: repeticion de 5.1 s -> sin eco, OK
+  ronda 2: repeticion de 2.6 s -> sin eco, OK
+  ronda 3: repeticion de 3.5 s -> sin eco, OK
+

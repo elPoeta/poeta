@@ -123,3 +123,23 @@ Cada enunciado se transcribe en CPU con un Whisper pequeño (`wake_word.stt_mode
 con "poeta"; lo demás se descarta al instante (no llega al LLM, a la memoria ni a disco). Si dices solo "poeta", suena un tono y
 espera tu orden. Limitación: es una aproximación; cualquier frase que empiece con "poeta" activa, y la detección tarda lo que tarda
 el STT pequeño. Un modelo openWakeWord propio (más liviano y preciso) queda pendiente.
+
+## Fase 6: herramientas y MCP
+
+El modelo ahora puede usar herramientas (`/tools` las lista). Todas pasan por el Permission Manager y se auditan.
+
+Integradas (activables en `config/tools.yaml`): `get_datetime`, `read_file`, `list_dir`, `write_file` (solo carpeta `workspace/`),
+`open_app`, `fetch_url` (bloquea redes privadas) y `run_command` (lista blanca exacta, sin shell).
+El contenido que devuelven archivos, paginas y servidores MCP es **dato no confiable**: si aparece en el turno,
+las acciones de nivel 3+ piden confirmacion explicita.
+
+### Servidores MCP
+1. `uv pip install -e '.[mcp]'`
+2. En `config/mcp.yaml`: completar `command`/`args`, `enabled: true` y agregar el nombre a `authorized_servers` (doble llave).
+3. `python main.py mcp list` y `python main.py mcp approve NOMBRE`: muestra las herramientas y fija su huella.
+   Si el servidor cambia sus herramientas, se desactiva hasta aprobar de nuevo.
+4. Por defecto cada herramienta MCP es riesgo `write` (pide confirmacion); bajalo con `risk`/`tool_risk` si confias.
+   Al servidor solo llegan las variables listadas en `env`, nunca tus claves.
+
+Limites conocidos: `fetch_url` no cubre DNS rebinding entre la resolucion y la conexion; los servidores MCP de terceros
+no estan verificados por POETA; el contenido binario (imagenes) de las herramientas se descarta.

@@ -1,0 +1,53 @@
+python scripts/stt_benchmark.py --audio-dir ~/AI/output/vozboard/audio \
+  --combo large-v3:cuda:float16 --combo large-v3-turbo:cuda:int8_float16 \
+  --combo large-v3-turbo:cpu:int8 --combo distil-large-v3:cpu:int8
+
+=== large-v3|cuda|float16 ===
+  recording_20260822_155504.wav      5.9s ->  0.45s  Allí podemos ver los datos, modificarlos, acceder a los turn
+  recording_20260822_155516.wav      2.2s ->  0.31s  Y también ver los documentos.
+  recording_20260822_155638.wav      7.7s ->  0.40s  En el sector de documentos podemos filtrarlos, ver los activ
+  recording_20260822_155702.wav      2.1s ->  0.32s  Según el tipo o el estado...
+  recording_20260822_155725.wav     12.2s ->  0.73s  Tenemos acceso a la papelera. Si eliminamos un documento, és
+  recording_20260822_155748.wav      1.5s ->  0.30s  Pasado ese periodo,
+  recording_20260822_160110.wav      5.0s ->  0.41s  Con Magendi, tu documentación está ordenada y accesible en t
+  recording_20260917_141910.wav     11.7s ->  0.46s  Ingresamos a mercadopago.com barra developers y ahí tocamos
+
+=== large-v3-turbo|cuda|int8_float16 ===
+  recording_20260822_155504.wav      5.9s ->  0.25s  Allí podemos ver los datos, modificarlos, acceder a los turn
+  recording_20260822_155516.wav      2.2s ->  0.21s  Y también ver los documentos.
+  recording_20260822_155638.wav      7.7s ->  0.23s  En el sector de documentos podemos filtrarlos, ver los activ
+  recording_20260822_155702.wav      2.1s ->  0.21s  según el tipo o el estado
+  recording_20260822_155725.wav     12.2s ->  0.30s  Tenemos acceso a la papelera. Si eliminamos un documento, es
+  recording_20260822_155748.wav      1.5s ->  0.20s  Pasado ese periodo...
+  recording_20260822_160110.wav      5.0s ->  0.23s  Con Magendi, tu documentación está ordenada y accesible en t
+  recording_20260917_141910.wav     11.7s ->  0.24s  Ingresamos a mercadopago.com barra developers y ahí tocamos
+
+=== large-v3-turbo|cpu|int8 ===
+  recording_20260822_155504.wav      5.9s ->  3.19s  Allí podemos ver los datos, modificarlos, acceder a los turn
+  recording_20260822_155516.wav      2.2s ->  3.03s  Y también ver los documentos.
+  recording_20260822_155638.wav      7.7s ->  3.16s  En el sector de documentos podemos filtrarlos, ver los activ
+  recording_20260822_155702.wav      2.1s ->  3.03s  según el tipo o el estado
+  recording_20260822_155725.wav     12.2s ->  3.52s  Tenemos acceso a la papelera. Si eliminamos un documento, és
+  recording_20260822_155748.wav      1.5s ->  3.02s  Pasado ese periodo,
+  recording_20260822_160110.wav      5.0s ->  3.18s  Con Magendi, tu documentación está ordenada y accesible en t
+  recording_20260917_141910.wav     11.7s ->  3.23s  Ingresamos a mercadopago.com barra developers y ahí tocamos
+
+=== distil-large-v3|cpu|int8 ===
+  recording_20260822_155504.wav      5.9s ->  3.13s  There we can see the data, modify them, access to the turnos
+  recording_20260822_155516.wav      2.2s ->  3.03s  and also to the documents.
+  recording_20260822_155638.wav      7.7s ->  6.08s  In the sector of documents, we can filter those, of the of t
+  recording_20260822_155702.wav      2.1s ->  3.05s  According the type or the state,
+  recording_20260822_155725.wav     12.2s ->  7.03s  We have access to the paperer. If we eliminate a document, t
+  recording_20260822_155748.wav      1.5s ->  3.01s  Passed that period.
+  recording_20260822_160110.wav      5.0s ->  3.17s  With Maghendi, your documentation is ordered and accessible
+  recording_20260917_141910.wav     11.7s ->  3.19s  Ingresses, Mercadopago.com, barredevelopers, and there we to
+
+=== Resumen ===
+combo                                         carga_s   lat_s     RTF     WER  VRAM_MiB
+large-v3|cuda|float16                             4.0    0.42   0.100     n/d      3865
+large-v3-turbo|cuda|int8_float16                  2.0    0.23   0.062     n/d      1066
+large-v3-turbo|cpu|int8                           1.9    3.17   0.873     n/d         0
+distil-large-v3|cpu|int8                          1.5    3.96   0.955     n/d         0
+
+VRAM = aumento medido tras cargar (aprox.). Con el LLM activo, el total debe dejar margen bajo 8192 MiB.
+Detalle: /home/elpoeta/AI/output/stt_benchmark/stt_resultados.csv

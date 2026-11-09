@@ -12,6 +12,12 @@ dependencies = [
 dev = [
     "pytest>=8.0",
 ]
+# Fase 5: vision y gestos (camara + MediaPipe).
+vision = [
+    "mediapipe>=0.10.14",
+    "opencv-python-headless>=4.9",
+    "numpy>=1.26",
+]
 # Fase 6: cliente MCP (solo si usas servidores MCP).
 mcp = [
     "mcp>=2,<3",

@@ -52,6 +52,7 @@ actions:
   mcp_write: 3                # herramientas MCP que modifican algo (valor por defecto de un servidor)
   mcp_sensitive: 4            # herramientas MCP sensibles o irreversibles
   privileged: never
+  camera_capture: 2
 
 # Carpetas: relativas a la raiz del proyecto o absolutas. Los enlaces simbolicos se resuelven antes de comprobar.
 file_access:

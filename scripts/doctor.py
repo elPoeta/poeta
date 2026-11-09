@@ -183,6 +183,17 @@ def main() -> int:
         except ImportError:
             record("WARN", f"paquete {mod}", f"no instalado (se necesita en {phase})")
 
+    # Audio: PortAudio (para sounddevice) y servidor PipeWire
+    try:
+        import sounddevice as sd
+        devs = sd.query_devices()
+        n_in = sum(1 for d in devs if d["max_input_channels"] > 0)
+        record("OK" if n_in else "WARN", "audio (sounddevice)", f"{n_in} entradas, {len(devs) - n_in} otras")
+    except ImportError:
+        record("WARN", "audio (sounddevice)", "no instalado (uv pip install -e '.[voice]')")
+    except OSError:
+        record("FAIL", "audio (PortAudio)", "falta la libreria del sistema: sudo dnf install portaudio")
+
     width = max(len(name) for _, name, _ in results)
     for level, name, detail in results:
         print(f"[{level:<4}] {name:<{width}}  {detail}")

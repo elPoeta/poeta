@@ -94,3 +94,23 @@ Instalar extras de voz (faster-whisper, numpy, sounddevice, kokoro-onnx) y las l
 - `poeta/voice/stt.py`: transcriptor local con la configuración probada en vozboard (beam 5, VAD 500 ms, español, pesos en `$AI_MODELS/whisper`).
 - `python scripts/stt_benchmark.py --audio-dir ~/AI/output/vozboard/audio --combo large-v3:cuda:float16 --combo large-v3-turbo:cuda:int8_float16 --combo large-v3-turbo:cpu:int8`: compara modelos y dispositivos (latencia, WER si hay `.txt` de referencia junto al audio, VRAM). Medir con el servidor del LLM encendido.
 - `python scripts/tts_benchmark.py kokoro|piper ...`: A/B de voces (requiere `kokoro-onnx` o `piper-tts`).
+
+### Audio (Fase 4b)
+
+Requisito del sistema: `sudo dnf install portaudio` (PipeWire lo atiende por su capa de compatibilidad).
+Con el micrófono interno y parlantes, POETA ignora el micrófono mientras habla (`echo_cancel.strategy: mute_during_playback`).
+Pruebas en vivo: `python scripts/mic_test.py devices|level|listen|echo`.
+
+### Conversación por voz (Fase 4d)
+
+    python main.py voice            # Enter = hablar; escribir texto también funciona; /quit sale
+    python main.py voice --always   # escucha continuamente (opt-in, sin palabra de activación todavía)
+
+Enter mientras POETA habla la interrumpe. Tras cada turno se muestran las latencias (STT, primer texto, primer audio).
+
+### Permisos (configurables, con avisos)
+
+`config/permissions.yaml` se puede relajar a tu gusto: si un nivel queda por debajo de lo recomendado, POETA arranca igual,
+muestra `Aviso de permisos: ... Recomendado: N` y deja constancia en la auditoría (`permissions_relaxed`).
+Siguen rechazándose los errores de forma y `privileged` (siempre `never`). En modo voz, las confirmaciones se responden
+escribiendo en la misma terminal (la respuesta no interrumpe a POETA).

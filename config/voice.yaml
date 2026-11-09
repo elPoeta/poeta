@@ -6,8 +6,8 @@ stt:
   # large-v3 fp16 daba 0,42 s pero +3865 MiB (no entra junto al LLM de 4,5 GB);
   # turbo en CPU: 3,4 s; distil-large-v3 es solo ingles (transcribio en ingles).
   model: large-v3-turbo
-  device: cuda
-  compute_type: int8_float16  # null = automatico (int8 en cpu, float16 en cuda)
+  device: auto                # cuda si hay GPU visible; si no, cpu (con int8 automaticamente)
+  compute_type: int8_float16  # solo GPU; en CPU se usa int8 (null = automatico)
   language: es
   beam_size: 5
   vad_filter: true
@@ -21,15 +21,15 @@ wake_word:
   threshold: null          # calibrar con mediciones
 
 tts:
-  engine: kokoro           # kokoro | piper | qwen3
+  engine: kokoro           # kokoro | piper  (qwen3: pendiente)
   resident: true           # mantener cargado en RAM (CPU)
   kokoro:
-    runtime: onnx
-    device: cpu
-    voice: null            # fijar tras la prueba A/B
+    model: null            # null = <paths.models>/kokoro/kokoro-v1.0.onnx
+    voices_file: null      # null = <paths.models>/kokoro/voices-v1.0.bin
+    voice: em_alex         # OBLIGATORIO: fijar tras la prueba A/B (scripts/tts_benchmark.py)
     speed: 1.0
+    lang: es
   piper:
-    voice: null            # por ejemplo, una voz es_MX masculina
-  qwen3:
-    model: 0.6B
-    device: null
+    model: null            # ruta a la voz .onnx (junto a su .onnx.json)
+    binary: piper
+    length_scale: 1.0

@@ -8,7 +8,9 @@ herramientas. Principios:
 - La autorizacion la valida el nucleo, no el modelo: la confirmacion solo puede venir del
   `confirmer` (la interfaz con el usuario). Nada que el modelo escriba cuenta como aprobacion.
 - Cada operacion se autoriza por separado: no hay aprobaciones que se reutilicen.
-- Los niveles minimos de riesgo no se pueden bajar desde el YAML (ver `MIN_LEVEL`).
+- Los niveles recomendados (RECOMMENDED) se pueden bajar desde el YAML: es tu equipo y tu decision.
+  Hacerlo genera un aviso con el nivel sugerido (permission_warnings); solo se rechazan los
+  errores estructurales y `privileged`, que siempre es `never`.
 - La politica se copia al crear el manager: modificar el dict de configuracion despues no la altera.
 """
 
@@ -34,13 +36,13 @@ AUTO, CONFIRM, EXPLICIT, NEVER = "auto", "confirm", "confirm_explicit", "never"
 _POLICIES = (AUTO, CONFIRM, EXPLICIT)
 _SEVERITY = {AUTO: 0, CONFIRM: 1, EXPLICIT: 2}
 
-# Nivel de riesgo minimo por accion: el YAML puede subirlo, nunca bajarlo.
-MIN_LEVEL = {
-    "modify_file": 3,
-    "run_command": 3,
-    "install_package": 3,
-    "cloud_transfer": 3,
-    "delete_data": 4,
+# Nivel de riesgo recomendado por accion y por que. El YAML puede bajarlo (con aviso) o subirlo.
+RECOMMENDED = {
+    "modify_file": (3, "modifica archivos tuyos"),
+    "run_command": (3, "ejecuta comandos en tu equipo"),
+    "install_package": (3, "instala software en tu equipo"),
+    "cloud_transfer": (3, "envia tu texto a un proveedor externo"),
+    "delete_data": (4, "borra datos de forma irreversible"),
 }
 # Acciones que operan sobre una ruta (details["path"]).
 PATH_ACTIONS = {"read_authorized_file", "create_document", "modify_file", "delete_data"}
@@ -79,16 +81,13 @@ class _Resolution:
     deny_reason: str | None = None
 
 
-def validate_config(perm: dict[str, Any]) -> None:
+def validate_config(perm: dict[str, Any]) -> list[str]:
+    """Rechaza lo estructuralmente invalido y devuelve avisos por las relajaciones de seguridad."""
     levels = perm.get("risk_levels") or {}
     for lvl in (1, 2, 3, 4):
         policy = (levels.get(lvl) or {}).get("policy")
         if policy not in _POLICIES:
             raise PermissionConfigError(f"risk_levels.{lvl}.policy debe ser uno de {list(_POLICIES)}.")
-    if levels[3]["policy"] == AUTO:
-        raise PermissionConfigError("risk_levels.3 no puede ser auto: modificar archivos exige confirmacion.")
-    if levels[4]["policy"] != EXPLICIT:
-        raise PermissionConfigError("risk_levels.4 debe ser confirm_explicit.")
     if "privileged_operations" not in (perm.get("never_automatic") or []):
         raise PermissionConfigError("never_automatic debe incluir privileged_operations.")
 
@@ -98,10 +97,30 @@ def validate_config(perm: dict[str, Any]) -> None:
     for kind, value in actions.items():
         if value != NEVER and (isinstance(value, bool) or value not in (1, 2, 3, 4)):
             raise PermissionConfigError(f"actions.{kind} invalido: {value!r} (usa 1-4 o never).")
-    for kind, minimum in MIN_LEVEL.items():
-        value = actions.get(kind)
+    rc = (perm.get("cloud") or {}).get("require_confirmation", True)
+    if not isinstance(rc, bool):
+        raise PermissionConfigError("cloud.require_confirmation debe ser true o false.")
+    return permission_warnings(perm)
+
+
+def permission_warnings(perm: dict[str, Any]) -> list[str]:
+    """Avisos (con el nivel sugerido) por cada ajuste mas permisivo que lo recomendado."""
+    out: list[str] = []
+    levels = perm.get("risk_levels") or {}
+    if (levels.get(3) or {}).get("policy") == AUTO:
+        out.append("risk_levels.3.policy = auto: modificar archivos, ejecutar comandos, instalar y enviar a la nube "
+                   "ocurririan sin pedirte permiso. Recomendado: confirm.")
+    if (levels.get(4) or {}).get("policy") != EXPLICIT:
+        out.append(f"risk_levels.4.policy = {(levels.get(4) or {}).get('policy')}: las acciones irreversibles "
+                   "deberian exigir escribir CONFIRMAR. Recomendado: confirm_explicit.")
+    if (perm.get("cloud") or {}).get("require_confirmation", True) is False:
+        out.append("cloud.require_confirmation = false: cada mensaje se envia al proveedor cloud sin que lo veas ni lo "
+                   "apruebes. Recomendado: true (o conservarlo y usar actions.cloud_transfer solo si confias en el proveedor).")
+    for kind, (minimum, why) in RECOMMENDED.items():
+        value = (perm.get("actions") or {}).get(kind)
         if value is not None and value != NEVER and value < minimum:
-            raise PermissionConfigError(f"actions.{kind} no puede estar por debajo del nivel {minimum}.")
+            out.append(f"actions.{kind} = {value}: {why}. Recomendado: {minimum}.")
+    return out
 
 
 def _digest(payload: Any) -> str | None:
@@ -155,7 +174,8 @@ class PermissionManager:
         root: Path | str | None = None,
     ) -> None:
         perm = copy.deepcopy(cfg["permissions"])
-        validate_config(perm)
+        self.warnings: list[str] = validate_config(perm)
+        self._cloud_confirm = (perm.get("cloud") or {}).get("require_confirmation", True) is not False
         self._root = Path(root) if root else Path(__file__).resolve().parents[2]
         self._levels = {int(k): v["policy"] for k, v in perm["risk_levels"].items()}
         self._actions: dict[str, Any] = dict(perm["actions"])
@@ -231,7 +251,8 @@ class PermissionManager:
                 return self._deny("transferencia sin contenido que mostrar al usuario", level)
             # El resumen se recalcula desde el contenido real: no se confia en lo que declare el solicitante.
             summary = chat_payload_summary(req.payload["messages"], req.payload.get("tools"), req.payload.get("params"))
-            # Que toda transferencia pida confirmacion lo garantiza validate_config (MIN_LEVEL + nivel 3 != auto).
+            if not self._cloud_confirm:  # decision explicita del usuario (ver permission_warnings)
+                policy = AUTO
             if summary["media_parts"] > 0:  # imagenes o audio: nunca con confirmacion simple
                 policy = EXPLICIT
 

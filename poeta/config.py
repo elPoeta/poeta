@@ -2,7 +2,6 @@
 
 Valida los invariantes de privacidad del plan:
 - cloud_fallback debe ser false (nunca hay sustitucion automatica a cloud).
-- cloud.require_confirmation debe ser true (toda transferencia externa se confirma).
 - El proveedor por defecto debe existir y no puede ser cloud.
 """
 
@@ -80,10 +79,6 @@ def _validate(cfg: dict[str, dict[str, Any]]) -> None:
             raise ConfigError(f"El proveedor '{name}' debe declarar explicitamente cloud: true|false.")
         if p["cloud"] and "api_key" in p:
             raise ConfigError(f"El proveedor cloud '{name}' no puede llevar api_key en el YAML; usa api_key_env.")
-
-    cloud_perms = (cfg["permissions"].get("cloud") or {})
-    if cloud_perms.get("require_confirmation") is not True:
-        raise ConfigError("permissions.cloud.require_confirmation debe ser true.")
 
     try:
         validate_permissions(cfg["permissions"])

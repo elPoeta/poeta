@@ -154,3 +154,28 @@ def test_wipe_cancels_on_eof(cfg, monkeypatch, capsys):
     s = open_store(cfg)
     assert s.stats()["counts"]["memories"] == 1
     s.close()
+
+
+def test_relaxed_permissions_are_announced_and_audited(tmp_path, capsys):
+    import main as poeta_main
+    from poeta.config import load_config
+    from poeta.security import AuditLog, PermissionManager, read_tail
+
+    cfg = load_config()
+    cfg["permissions"]["cloud"]["require_confirmation"] = False
+    audit = AuditLog(tmp_path / "a.jsonl")
+    pm = PermissionManager(cfg, audit=audit, root=tmp_path)
+    poeta_main.announce_permission_warnings(pm, audit)
+    err = capsys.readouterr().err
+    assert "Aviso de permisos" in err and "Recomendado: true" in err
+    ev = [e for e in read_tail(tmp_path / "a.jsonl", 5) if e["event"] == "permissions_relaxed"]
+    assert ev and ev[0]["warnings"]
+
+
+def test_default_permissions_start_silently(tmp_path, capsys):
+    import main as poeta_main
+    from poeta.config import load_config
+    from poeta.security import PermissionManager
+
+    poeta_main.announce_permission_warnings(PermissionManager(load_config(), root=tmp_path), None)
+    assert capsys.readouterr().err == ""

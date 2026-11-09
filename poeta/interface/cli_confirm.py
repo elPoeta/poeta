@@ -55,22 +55,35 @@ def render(req: ActionRequest, explicit: bool, full: bool = False) -> str:
     return "\n".join(lines)
 
 
-async def cli_confirmer(req: ActionRequest, explicit: bool) -> bool:
-    full = False
-    while True:
-        print(render(req, explicit, full))
-        prompt = (
-            "Escribe CONFIRMAR para autorizar, 'v' para ver todo, o Enter para cancelar: "
-            if explicit
-            else "Autorizar? [s/N, v = ver completo] "
-        )
-        try:
-            answer = (await asyncio.to_thread(input, prompt)).strip()
-        except (EOFError, KeyboardInterrupt):
-            return False
-        if answer.lower() == "v":
-            full = True
-            continue
-        if explicit:
-            return answer == "CONFIRMAR"
-        return answer.lower() in YES
+async def _stdin_reader(prompt: str) -> str:
+    return await asyncio.to_thread(input, prompt)
+
+
+def make_cli_confirmer(read_line=_stdin_reader):
+    """Confirmador de terminal. `read_line(prompt)` (async) permite usar otra fuente de teclado,
+    por ejemplo la cola compartida del modo voz, donde dos lectores de stdin se pelearian."""
+
+    async def confirmer(req: ActionRequest, explicit: bool) -> bool:
+        full = False
+        while True:
+            print(render(req, explicit, full))
+            prompt = (
+                "Escribe CONFIRMAR para autorizar, 'v' para ver todo, o Enter para cancelar: "
+                if explicit
+                else "Autorizar? [s/N, v = ver completo] "
+            )
+            try:
+                answer = (await read_line(prompt)).strip()
+            except (EOFError, KeyboardInterrupt):
+                return False
+            if answer.lower() == "v":
+                full = True
+                continue
+            if explicit:
+                return answer == "CONFIRMAR"
+            return answer.lower() in YES
+
+    return confirmer
+
+
+cli_confirmer = make_cli_confirmer()

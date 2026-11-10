@@ -2,7 +2,8 @@
 
   python main.py                        Carga y valida la configuracion.
   python main.py chat [--continue]      Chat de texto en streaming (--continue retoma la ultima conversacion).
-  python main.py voice [--wake|--always]  Conversacion por voz (Enter para hablar; Enter interrumpe).
+  python main.py voice [--wake|--always] [--gestures]  Conversacion por voz (Enter para hablar; Enter interrumpe).
+  python main.py metrics [--last N]     Latencias (p50/p95), RAM y VRAM de los turnos de voz.
   python main.py audit [--verify]       Muestra o verifica el registro de auditoria.
   python main.py memory stats|export ARCHIVO|wipe   Administra la memoria.
   python main.py tool NOMBRE ['{"arg": ...}']   Ejecuta una herramienta sin el modelo (diagnostico); 'tool list' las lista.
@@ -20,12 +21,17 @@ from pathlib import Path
 from typing import Any
 
 from poeta.config import PROJECT_ROOT, ConfigError, assistant_name, load_config, system_prompt
+from poeta.gestures import (GestureConfig, GestureEngine, GestureHub, GesturePolicy, GestureService,
+                            load_calibration, make_gesture_confirmer)
+from poeta.vision import CameraConfig, CameraManager, VisionConfigError
+from poeta.vision.hands import HandsConfig, HandTracker
 from poeta.automation import DesktopConfig, load_routines, register_desktop, register_routines
-from poeta.core import AgentCore
+from poeta.core import AgentCore, EventBus
 from poeta.envfile import load_env_file
 from poeta.interface import cli_confirmer, make_cli_confirmer
 from poeta.logging_setup import setup_logging
 from poeta.memory import KINDS, MemoryStore, MemoryStoreError
+from poeta.monitoring import MetricsLog, Sampler, summarize
 from poeta.models import ModelRouter, RouterError
 from poeta.providers import ProviderError, ToolCall
 from poeta.tools import ToolRegistry, ToolsConfig, register_builtin
@@ -239,6 +245,7 @@ def build_agent(cfg: dict, provider: str | None, model: str | None, confirmer=No
         max_tool_rounds=tools_cfg.max_tool_rounds,
     )
     agent.mcp = mcp  # se inicia/detiene con start_mcp/stop_mcp
+    agent.audit = audit
     return router, agent, memory
 
 
@@ -321,21 +328,58 @@ async def _chat_loop(cfg: dict, router: ModelRouter, agent: AgentCore) -> int:
             print("Aviso: la memoria fallo y esta conversacion puede no haberse guardado (ver logs/poeta.log).\n")
 
 
+async def deny_without_keyboard(req, explicit: bool) -> bool:
+    """Confirmador del modo servicio: sin teclado no hay a quien preguntar, asi que se deniega (salvo gestos)."""
+    print(f"(sin teclado: se deniega '{req.description}'; solo se puede confirmar con gestos acciones de nivel 3)")
+    return False
+
+
+async def start_gestures(cfg: dict, hub: GestureHub, agent: AgentCore):
+    """Arranca camara + manos + gestos. Si algo falla, avisa y POETA sigue sin gestos."""
+    try:
+        cam_cfg, hands_cfg = CameraConfig.from_config(cfg), HandsConfig.from_config(cfg, PROJECT_ROOT)
+        g_cfg = GestureConfig.from_config(cfg)
+    except VisionConfigError as exc:
+        print(f"Gestos desactivados: {exc}", file=sys.stderr)
+        return None, None
+    th = load_calibration(PROJECT_ROOT / g_cfg.calibration_file, g_cfg.thresholds)
+    camera = CameraManager(cam_cfg)
+    perms = getattr(getattr(agent, "tools", None), "permissions", None)
+    svc = GestureService(camera, HandTracker(hands_cfg), GestureEngine(g_cfg, th), hub.on_event, perms,
+                         fps=hands_cfg.fps, on_error=lambda m: print(f"\n(gestos detenidos: {m})"))
+    if not await svc.start():
+        print(f"Gestos desactivados: {svc.error}", file=sys.stderr)
+        camera.close()
+        return None, None
+    hub.active = True
+    print("Gestos activos: palma = callar a POETA; mano abierta 1.5 s = activar; pulgar arriba/abajo = confirmar.")
+    return svc, camera
+
+
 async def voice(cfg: dict, provider: str | None, model: str | None, resume_last: bool, always: bool,
-                wake: bool = False) -> int:
+                wake: bool = False, gestures: bool = False, headless: bool = False, tag: str | None = None) -> int:
     import time
 
     from poeta.voice.audio import AudioConfig, AudioError, AudioManager
     from poeta.voice.loop import LineQueue, VoiceLoop
-    from poeta.voice.stt import SttConfig, SttError, Transcriber
+    from poeta.voice.stt import SttConfig, SttError, Transcriber, _cuda_count, resolve_device
     from poeta.voice.tts import SpeechPipeline, TtsConfig, TtsError, make_engine
     from poeta.voice.wake import TranscriptWake, WakeConfig, make_chime
 
+    if headless and not (wake or always):
+        print("--headless necesita --wake o --always: sin teclado no hay forma de empezar a hablar.", file=sys.stderr)
+        return 2
     keys = LineQueue()  # unico lector de teclado: tambien responde las confirmaciones de permisos
-    built = build_agent(cfg, provider, model, confirmer=make_cli_confirmer(keys.ask))
+    bus = EventBus()
+    hub = GestureHub(GesturePolicy.from_config(cfg), bus)
+    confirmer = make_cli_confirmer(keys.ask) if not headless else deny_without_keyboard
+    if gestures:
+        confirmer = make_gesture_confirmer(confirmer, hub)
+    built = build_agent(cfg, provider, model, confirmer=confirmer)
     if built is None:
         return 1
     router, agent, memory = built
+    hub.audit = getattr(agent, "audit", None)
     audio = None
     pipe = None
     try:
@@ -344,6 +388,8 @@ async def voice(cfg: dict, provider: str | None, model: str | None, resume_last:
         engine = make_engine(TtsConfig.from_config(cfg))
         print(f"Cargando voz (STT {stt.config.model}, TTS {engine.__class__.__name__})...", flush=True)
         await asyncio.to_thread(stt.load)
+        stt_device, stt_compute = resolve_device(stt.config, _cuda_count() if stt.config.device == "auto" else 0)
+        print(f"STT: {stt.config.model} en {stt_device} ({stt_compute})", flush=True)
         await asyncio.to_thread(stt.warmup)
         await asyncio.to_thread(engine.synthesize, "Listo.")
         detector = None
@@ -373,7 +419,14 @@ async def voice(cfg: dict, provider: str | None, model: str | None, resume_last:
             print(f"Retomada la conversacion #{last} ({agent.resume(last)} mensajes cargados).")
 
     await start_mcp(agent)
-    keys.start_stdin_reader(sys.stdin)
+    gesture_svc = None
+    camera = None
+    if gestures:
+        gesture_svc, camera = await start_gestures(cfg, hub, agent)
+    if not headless:  # como servicio no hay teclado: leer stdin (/dev/null) daria EOF y cerraria POETA
+        keys.start_stdin_reader(sys.stdin)
+    elif not gestures:
+        print("Aviso: sin teclado ni gestos, toda accion que pida confirmacion se denegara.", file=sys.stderr)
 
     async def on_command(line: str) -> bool:
         return await run_command(line, router, agent)
@@ -381,10 +434,18 @@ async def voice(cfg: dict, provider: str | None, model: str | None, resume_last:
     loop = VoiceLoop(audio=audio, stt=stt, pipeline=pipe, agent=agent, keys=keys,
                      mode="wake" if wake else ("always" if always else "ptt"),
                      wake=detector, followup_s=wcfg.followup_s if wcfg else 8.0,
-                     chime=(make_chime(), 24000) if wcfg and wcfg.chime else None, on_command=on_command)
+                     chime=(make_chime(), 24000) if wcfg and wcfg.chime else None, on_command=on_command,
+                     bus=bus, metrics=MetricsLog(PROJECT_ROOT / "logs" / "metrics.jsonl"), sampler=Sampler(),
+                     meta={"provider": st["provider"], "model": st["model"], "stt": f"{stt.config.model}/{stt_device}",
+                           **({"tag": tag} if tag else {})})
+    hub.on_interrupt = loop.interrupt
     try:
         return await loop.run()
     finally:
+        if gesture_svc is not None:
+            gesture_svc.stop()
+        if camera is not None:
+            camera.close()
         pipe.close()
         audio.stop()
         await stop_mcp(agent)
@@ -453,6 +514,32 @@ def memory_cmd(cfg: dict, action: str, target: str | None) -> int:
         print("Memoria borrada.")
         return 0
     return 2
+
+
+def metrics_cmd(last: int) -> int:
+    rows = MetricsLog(PROJECT_ROOT / "logs" / "metrics.jsonl").read(last or None)
+    if not rows:
+        print("Aun no hay metricas: usa 'python main.py voice' y habla un rato.")
+        return 0
+    groups: dict[str, list] = {}
+    for r in rows:  # separa configuraciones: no mezclar la P16 con GPU y el otro equipo, ni nube con local
+        key = (f"proveedor {r.get('provider', '?')} / {r.get('model', '?')} | STT {r.get('stt', '?')}"
+               + (f" | etiqueta: {r['tag']}" if r.get("tag") else ""))
+        groups.setdefault(key, []).append(r)
+    names = {"stt_s": "STT", "reasoning_s": "empieza a razonar", "first_text_s": "primer texto",
+             "first_audio_s": "primer audio", "total_s": "turno completo (incluye lo que tarda en hablar)"}
+    for key, grp in groups.items():
+        s = summarize(grp)
+        print(f"\n== {key}\nTurnos: {s['turns']}  (interrumpidos: {s['interrupted']})")
+        for k, label in names.items():
+            if k in s:
+                v = s[k]
+                print(f"  {label:<20} p50 {v['p50']:>5.2f}s   p95 {v['p95']:>5.2f}s   max {v['max']:>5.2f}s   (n={v['n']})")
+        if "rss_mb" in s:
+            print(f"  RAM del proceso      {s['rss_mb']['first']:.0f} -> {s['rss_mb']['last']:.0f} MB (max {s['rss_mb']['max']:.0f})")
+        print(f"  VRAM usada           " + (f"{s['gpu_used_mib']['last']:.0f} MiB (max {s['gpu_used_mib']['max']:.0f})"
+                                           if "gpu_used_mib" in s else "sin dato (no hay nvidia-smi / GPU en ese equipo)"))
+    return 0
 
 
 def mcp_cmd(cfg: dict, action: str, name: str | None) -> int:
@@ -534,6 +621,10 @@ def main() -> int:
     voice_p.add_argument("--provider", help="Proveedor (por defecto, el de providers.yaml)")
     voice_p.add_argument("--model", help="Modelo")
     voice_p.add_argument("--continue", dest="resume_last", action="store_true", help="Retoma la ultima conversacion")
+    voice_p.add_argument("--tag", help="Etiqueta para las metricas de esta sesion (ej. reasoning-off) y compararlas despues")
+    voice_p.add_argument("--headless", action="store_true",
+                         help="Modo servicio: sin teclado (requiere --wake o --always); las confirmaciones solo por gestos")
+    voice_p.add_argument("--gestures", action="store_true", help="Activa la camara y los gestos (palma, pulgares)")
     mode_g = voice_p.add_mutually_exclusive_group()
     mode_g.add_argument("--wake", action="store_true",
                         help="Manos libres: solo responde cuando empiezas con 'poeta' (lo demas se descarta)")
@@ -548,6 +639,8 @@ def main() -> int:
     tool_p = sub.add_parser("tool", help="Ejecuta una herramienta sin el modelo (diagnostico)")
     tool_p.add_argument("name", nargs="?", help="Nombre de la herramienta, o 'list'")
     tool_p.add_argument("args", nargs="?", help="Argumentos en JSON, ej: '{\"name\": \"Firefox\"}'")
+    met_p = sub.add_parser("metrics", help="Resumen de latencias y recursos de los turnos de voz")
+    met_p.add_argument("--last", type=int, default=0, help="Solo los ultimos N turnos")
     mcp_p = sub.add_parser("mcp", help="Servidores MCP")
     mcp_p.add_argument("action", choices=["list", "approve", "inspect"])
     mcp_p.add_argument("name", nargs="?", help="Servidor (approve/inspect)")
@@ -573,9 +666,12 @@ def main() -> int:
     if args.command == "chat":
         return asyncio.run(chat(cfg, args.provider, args.model, args.resume_last))
     if args.command == "voice":
-        return asyncio.run(voice(cfg, args.provider, args.model, args.resume_last, args.always, args.wake))
+        return asyncio.run(voice(cfg, args.provider, args.model, args.resume_last, args.always, args.wake, args.gestures,
+                                 args.headless, args.tag))
     if args.command == "audit":
         return audit_cmd(cfg, args.verify, args.tail)
+    if args.command == "metrics":
+        return metrics_cmd(args.last)
     if args.command == "tool":
         return asyncio.run(tool_cmd(cfg, args.name, args.args))
     if args.command == "mcp":

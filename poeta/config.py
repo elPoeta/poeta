@@ -113,7 +113,7 @@ def _validate(cfg: dict[str, dict[str, Any]]) -> None:
     except McpConfigError as exc:
         raise ConfigError(f"mcp.yaml: {exc}") from exc
 
-    from poeta.gestures import GestureConfig
+    from poeta.gestures import GestureConfig, GesturePolicy
     from poeta.vision import CameraConfig, VisionConfigError
     from poeta.vision.hands import HandsConfig
 
@@ -121,6 +121,7 @@ def _validate(cfg: dict[str, dict[str, Any]]) -> None:
         CameraConfig.from_config(cfg)
         HandsConfig.from_config(cfg, PROJECT_ROOT)
         GestureConfig.from_config(cfg)
+        GesturePolicy.from_config(cfg)
     except VisionConfigError as exc:
         raise ConfigError(f"vision.yaml: {exc}") from exc
 

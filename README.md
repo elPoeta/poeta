@@ -173,3 +173,20 @@ confiables (el contenido lo controlan terceros). `service_control` solo actua so
 `stop_process` solo envia SIGTERM a procesos tuyos y nunca a procesos criticos; `window_action` verifica el titulo real
 antes de actuar. Una rutina solo la nombra el modelo: sus pasos son fijos y cada paso pasa ademas por sus propios permisos.
 `/run NOMBRE` la ejecuta desde el chat.
+
+## Fase 9: integracion
+
+`python main.py voice --wake --gestures` une voz, herramientas, MCP y gestos en un solo proceso.
+
+- **Estado y metricas:** el bucle publica estados (`idle, listening, transcribing, thinking, tool, speaking, confirming`) en
+  un `EventBus` (para el panel/HUD de la Fase 8; nunca llevan texto). Cada turno agrega una fila numerica a
+  `logs/metrics.jsonl` (STT, razonamiento, primer texto, primer audio, total, RAM, VRAM). `python main.py metrics [--last N]`
+  muestra p50/p95: es la medicion de latencia y de VRAM pendiente en la P16.
+- **Gestos en la conversacion:** palma sostenida = callar a POETA. Para confirmar con gestos: mano abierta 1.5 s (activa),
+  luego pulgar arriba = autorizar, abajo = cancelar. Solo para confirmaciones de nivel 3; las explicitas (nivel 4, imagenes o
+  audio), `cloud_transfer` y las que siguen a datos no confiables (web, ventanas, MCP) se contestan SIEMPRE con el teclado.
+  Cada decision por gesto queda auditada (`gesture_confirmation`). Se ajusta en `config/vision.yaml` (gestures:
+  `confirm_with_gestures`, `interrupt_with_palm`, ambos true por defecto).
+- **Servicio supervisado:** `python scripts/install_service.py [--gestures]` instala `poeta.service` (usuario, con reinicio
+  automatico). Corre `voice --wake --headless`: sin teclado, las confirmaciones solo pueden darse por gestos y el resto se
+  deniega. `systemctl --user enable --now poeta` y `journalctl --user -u poeta -f`.

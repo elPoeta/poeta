@@ -98,7 +98,9 @@ class VoiceLoop:
     def __init__(self, *, audio: Any, stt: Any, pipeline: Any, agent: Any, keys: LineQueue,
                  mode: str = "ptt", wake: Any = None, followup_s: float = 8.0, chime: Any = None,
                  on_command: Callable[[str], Awaitable[bool]] | None = None,
-                 out: Callable[..., None] = print, listen_timeout: float = 15.0):
+                 out: Callable[..., None] = print, listen_timeout: float = 15.0,
+                 bus: Any = None, metrics: Any = None, sampler: Callable[[], dict[str, Any]] | None = None,
+                 meta: dict[str, Any] | None = None):
         if mode not in ("ptt", "always", "wake"):
             raise ValueError(f"modo invalido: {mode!r}")
         if mode == "wake" and wake is None:
@@ -107,6 +109,21 @@ class VoiceLoop:
         self.audio, self.stt, self.pipe, self.agent, self.keys = audio, stt, pipeline, agent, keys
         self.mode, self.on_command, self.out, self.listen_timeout = mode, on_command, out, listen_timeout
         self.turns = 0
+        self.bus, self.metrics, self.sampler = bus, metrics, sampler
+        self.meta = dict(meta or {})  # etiquetas fijas de cada fila: proveedor, modelo, STT/dispositivo...
+        self._stop_evt = asyncio.Event()  # gesto de palma u otra orden externa de callar a POETA
+        self._responding = False
+
+    def _state(self, state: str) -> None:
+        if self.bus is not None:
+            self.bus.set_state(state)
+
+    def interrupt(self) -> bool:
+        """Calla a POETA si esta respondiendo (lo usa el gesto de palma). Devuelve si hizo algo."""
+        if self._responding:
+            self._stop_evt.set()
+            return True
+        return False
 
     # -- entrada ------------------------------------------------------------
     async def run(self) -> int:
@@ -117,13 +134,16 @@ class VoiceLoop:
                      "Enter interrumpe. /quit para salir.")
         else:
             self.out("Escuchando todo el tiempo (sin palabra de activacion). Enter interrumpe a POETA. /quit para salir.")
+        self._state("idle")
         while True:
             try:
                 if await self._step():
+                    self._state("stopped")
                     return 0
             except (KeyboardInterrupt, asyncio.CancelledError):
                 self.audio.cancel_listen()
                 self.pipe.stop()
+                self._state("stopped")
                 return 0
 
     async def _handle_line(self, line: str) -> bool | None:
@@ -191,10 +211,13 @@ class VoiceLoop:
             await asyncio.to_thread(self.audio.speak, self.chime[0], self.chime[1])
         self.out("(te escucho)")
         self.audio.flush_input()
+        self._state("listening")
         utt = await asyncio.to_thread(self.audio.listen, self.followup_s)
         if utt is None:
             self.out("(no te escuche)")
+            self._state("idle")
             return False
+        self._state("transcribing")
         text, stt_s = await self._transcribe(utt)
         if not text or is_noise_transcript(text):
             self.out(f"(ignorado: {text!r})")
@@ -206,22 +229,27 @@ class VoiceLoop:
     async def _listen_once(self, timeout: float, quiet: bool = False) -> bool:
         if not quiet:
             self.audio.flush_input()  # descarta el clic de la tecla y lo capturado antes
+            self._state("listening")
         utt = await asyncio.to_thread(self.audio.listen, timeout)
         if utt is None:
             if not quiet:
                 self.out("(no te escuche)")
+                self._state("idle")
             return False
+        self._state("transcribing")
         t0 = time.perf_counter()
         try:
             res = await asyncio.to_thread(self.stt.transcribe, to_float32(utt))
         except Exception as e:  # noqa: BLE001
             self.out(f"Error de STT: {e}")
+            self._state("idle")
             return False
         stt_s = time.perf_counter() - t0
         text = res.text.strip()
         if is_noise_transcript(text):
             if not quiet:
                 self.out(f"(ignorado: {text!r})")
+            self._state("idle")
             return False
         self.out(f"Tu: {text}")
         await self._respond(text, stt_s=stt_s)
@@ -239,6 +267,10 @@ class VoiceLoop:
         t0 = time.perf_counter()
         w0 = getattr(self.keys, "ask_wait_s", 0.0)
         first = {"text": None, "reason": None}
+        tools_used = 0
+        self._stop_evt.clear()
+        self._responding = True
+        self._state("thinking")
 
         def since_start() -> float:  # no cuenta lo que tardaste en autorizar
             return time.perf_counter() - t0 - (getattr(self.keys, "ask_wait_s", 0.0) - w0)
@@ -247,53 +279,69 @@ class VoiceLoop:
         self.out("POETA: ", end="", flush=True)
 
         async def consume() -> None:
+            nonlocal tools_used
             async for ev in self.agent.respond(text):
                 if ev.kind == "reasoning" and first["reason"] is None:
                     first["reason"] = since_start()
                 elif ev.kind == "text":
                     if first["text"] is None:
                         first["text"] = since_start()
+                    self._state("speaking")
                     self.out(ev.text, end="", flush=True)
                     self.pipe.feed(ev.text)
                 elif ev.kind == "tool_start" and ev.tool_calls:
+                    tools_used += len(ev.tool_calls)
+                    self._state("tool")
                     self.out(f"\n[herramienta: {', '.join(t.name for t in ev.tool_calls)}]\nPOETA: ", end="", flush=True)
                 elif ev.kind == "tool_result" and ev.result is not None:
                     r = ev.result
+                    self._state("thinking")
                     self.out(f"[{r.name}: {'denegada' if r.denied else ('ok' if r.ok else 'error')}]\nPOETA: ",
                              end="", flush=True)
             self.pipe.end()
 
         task = asyncio.create_task(consume())
         key = asyncio.create_task(self.keys.get())
+        stop = asyncio.create_task(self._stop_evt.wait())
         interrupted = False
         try:
-            done, _ = await asyncio.wait({task, key}, return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait({task, key, stop}, return_when=asyncio.FIRST_COMPLETED)
             if key in done:
                 interrupted = True
                 self._requeue(key)
+            elif stop in done and task not in done:
+                interrupted = True
             else:
                 err = task.exception()
                 if err is not None:
                     self.out(f"\nError: {err}")
                     self.pipe.stop()
                     key.cancel()
+                    stop.cancel()
+                    self._state("idle")
                     return
+                self._state("speaking")
                 speech = asyncio.create_task(asyncio.to_thread(self.pipe.wait))
-                done, _ = await asyncio.wait({speech, key}, return_when=asyncio.FIRST_COMPLETED)
+                done, _ = await asyncio.wait({speech, key, stop}, return_when=asyncio.FIRST_COMPLETED)
                 if key in done:
                     interrupted = True
                     self._requeue(key)
+                elif stop in done and speech not in done:
+                    interrupted = True
                 else:
                     key.cancel()
         except asyncio.CancelledError:
             interrupted = True
             raise
         finally:
+            self._responding = False
+            stop.cancel()
             if interrupted:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)  # el agente guarda el parcial
                 self.pipe.stop()
                 self.out("\n[interrumpido]")
+        self._state("idle")
         parts = []
         if stt_s is not None:
             parts.append(f"stt {stt_s:.2f}s")
@@ -307,3 +355,25 @@ class VoiceLoop:
         if self.pipe.first_audio_s is not None:
             parts.append(f"1er audio {max(0.0, self.pipe.first_audio_s - waited):.2f}s")
         self.out("\n[" + " | ".join(parts) + "]\n" if parts else "\n")
+        self._record_turn(stt_s, first, waited, interrupted, tools_used, time.perf_counter() - t0)
+
+    def _record_turn(self, stt_s: float | None, first: dict[str, Any], waited: float, interrupted: bool,
+                     tools: int, total: float) -> None:
+        """Una fila de metricas por turno (solo numeros). Nunca debe afectar la conversacion."""
+        if self.metrics is None and self.bus is None:
+            return
+        row = {**self.meta, "mode": self.mode, "stt_s": stt_s, "reasoning_s": first["reason"], "first_text_s": first["text"],
+               "first_audio_s": (max(0.0, self.pipe.first_audio_s - waited) if self.pipe.first_audio_s is not None
+                                 else None),
+               "auth_wait_s": round(waited, 2) if waited > 0 else None, "total_s": round(max(0.0, total - waited), 2),
+               "interrupted": interrupted, "tools": tools}
+        row = {k: (round(v, 3) if isinstance(v, float) else v) for k, v in row.items() if v is not None}
+        try:
+            if self.sampler is not None:
+                row.update(self.sampler())
+            if self.metrics is not None:
+                self.metrics.record(**row)
+            if self.bus is not None:
+                self.bus.publish("turn", **row)
+        except Exception:  # noqa: BLE001
+            pass

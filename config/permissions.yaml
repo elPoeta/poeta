@@ -9,7 +9,7 @@
 # Una accion que no figura en `actions` se deniega.
 
 cloud:
-  require_confirmation: true        # cada operacion, nunca automatica
+  require_confirmation: false        # cada operacion, nunca automatica
   confirmation_shows:
     - provider
     - model

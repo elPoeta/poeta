@@ -120,12 +120,82 @@ def test_media_status_no_players(tmp_path):
     assert "No hay reproductores" in run(reg.execute(call("media_status"))).text
 
 
-def test_media_control_maps_command_and_level2_is_automatic(tmp_path):
+def players_reply(*pairs):
+    """Respuestas de FakeRunner para `playerctl -l` y `playerctl -p NAME status`."""
+    r = {"playerctl -l": CmdResult(0, "\n".join(n for n, _ in pairs), "")}
+    for n, st in pairs:
+        r[f"-p {n} status"] = CmdResult(0, st, "")
+    return r
+
+
+def sent_to(runner):
+    return [c for c in runner.calls if c[:2] == ["playerctl", "-p"] and c[3] != "status"]
+
+
+def test_media_control_prefers_music_app_over_paused_browser(tmp_path):
+    # caso real: firefox (pestaña en pausa) aparece primero; spotify esta en pausa
     asker = Asker(True)
-    reg, runner, *_ = build(tmp_path, asker=asker)
+    reg, runner, *_ = build(tmp_path, players_reply(("firefox.instance123", "Paused"), ("spotify", "Paused")),
+                            asker=asker, edit={"media": {"wait_s": 0}})
+    r = run(reg.execute(call("media_control", command="play")))
+    assert r.ok and "spotify" in r.text and sent_to(runner) == [["playerctl", "-p", "spotify", "play"]]
+    assert not asker.calls  # nivel 2: automatico
+
+
+def test_media_control_prefers_the_playing_player(tmp_path):
+    reg, runner, *_ = build(tmp_path, players_reply(("spotify", "Paused"), ("firefox.instance1", "Playing")),
+                            edit={"media": {"wait_s": 0}})
+    assert run(reg.execute(call("media_control", command="pause"))).ok
+    assert sent_to(runner) == [["playerctl", "-p", "firefox.instance1", "pause"]]
+
+
+def test_media_control_explicit_player_and_unknown_player(tmp_path):
+    reg, runner, *_ = build(tmp_path, players_reply(("firefox.instance1", "Playing"), ("spotify", "Paused")),
+                            edit={"media": {"wait_s": 0}})
+    assert run(reg.execute(call("media_control", command="next", player="Spotify"))).ok
+    assert sent_to(runner)[-1] == ["playerctl", "-p", "spotify", "next"]
+    r = run(reg.execute(call("media_control", command="next", player="vlc")))
+    assert not r.ok and "firefox.instance1" in r.text and "spotify" in r.text
+    assert not run(reg.execute(call("media_control", command="next", player="--help"))).ok
+
+
+def test_media_control_only_browser_still_works(tmp_path):
+    reg, runner, *_ = build(tmp_path, players_reply(("chromium.instance9", "Paused")), edit={"media": {"wait_s": 0}})
     assert run(reg.execute(call("media_control", command="play_pause"))).ok
-    assert runner.calls[-1] == ["playerctl", "play-pause"] and not asker.calls
-    assert not run(reg.execute(call("media_control", command="rm"))).ok  # enum
+    assert sent_to(runner) == [["playerctl", "-p", "chromium.instance9", "play-pause"]]
+
+
+def test_media_control_waits_for_app_that_is_starting(tmp_path):
+    state = {"n": 0}
+
+    class Late(FakeRunner):
+        async def __call__(self, argv, timeout):
+            self.calls.append(argv)
+            if argv[:2] == ["playerctl", "-l"]:
+                state["n"] += 1
+                return CmdResult(0, "spotify" if state["n"] >= 2 else "", "")
+            if argv[-1] == "status":
+                return CmdResult(0, "Stopped", "")
+            return CmdResult(0, "", "")
+
+    cfg = load_config()
+    cfg["desktop"]["media"] = {"wait_s": 3}
+    pm = PermissionManager(cfg, confirmer=Asker(True), root=tmp_path)
+    reg = ToolRegistry(pm, 8000, 30)
+    runner = Late()
+    register_desktop(reg, DesktopConfig.from_config(cfg), runner, lambda n: "/x")
+    r = run(reg.execute(call("media_control", command="play")))
+    assert r.ok and state["n"] >= 2 and sent_to(runner) == [["playerctl", "-p", "spotify", "play"]]
+    # pausar no espera: sin reproductores falla de inmediato
+    state["n"] = -99
+    t0 = __import__("time").time()
+    assert not run(reg.execute(call("media_control", command="pause"))).ok and __import__("time").time() - t0 < 1.5
+
+
+def test_media_control_no_players(tmp_path):
+    reg, *_ = build(tmp_path, {"playerctl -l": CmdResult(1, "", "No players found")}, edit={"media": {"wait_s": 0}})
+    r = run(reg.execute(call("media_control", command="play")))
+    assert not r.ok and "ningun reproductor" in r.text
 
 
 # -- volumen -----------------------------------------------------------------------------------------------
@@ -158,23 +228,99 @@ def test_list_windows_is_untrusted_and_filters_ids(tmp_path):
     assert r.ok and r.untrusted and "Firefox" in r.text and "reboot" not in r.text
 
 
-def test_window_close_requires_confirmation_and_verifies_title(tmp_path):
-    asker = Asker(True)
+def test_window_close_confirms_with_the_REAL_title_not_the_models(tmp_path):
+    asker = ReqAsker(True)
     reg, runner, *_ = build(tmp_path, WIN, asker=asker)
-    r = run(reg.execute(call("window_action", id="{aaaaaaaa-1111}", title="Firefox", action="close")))
-    assert r.ok and asker.calls and runner.calls[-1] == ["kdotool", "windowclose", "{aaaaaaaa-1111}"]
-    # el titulo autorizado no coincide con el real: no se hace nada
-    n = len(runner.calls)
-    r = run(reg.execute(call("window_action", id="{aaaaaaaa-1111}", title="Otra cosa", action="close")))
-    assert not r.ok and "no coincide" in r.text and all("windowclose" not in " ".join(c) for c in runner.calls[n:])
+    # el modelo no manda titulo (o manda uno falso): el usuario ve el titulo que da KWin
+    r = run(reg.execute(call("window_action", id="{aaaaaaaa-1111}", action="close")))
+    assert r.ok and runner.calls[-1] == ["kdotool", "windowclose", "{aaaaaaaa-1111}"]
+    assert "Firefox" in asker.reqs[0].description
+    assert not run(reg.execute(call("window_action", id="{aaaaaaaa-1111}", title="Calculadora", action="close"))).ok  # campo desconocido
 
 
-def test_window_action_denied_or_bad_id(tmp_path):
+def test_window_action_aborts_if_window_changed_after_confirmation(tmp_path):
+    titles = iter(["Firefox", "Firefox", "Otra ventana"])  # describe, (confirmacion), run
+
+    class Changing(FakeRunner):
+        async def __call__(self, argv, timeout):
+            self.calls.append(argv)
+            if argv[1] == "getwindowname":
+                return CmdResult(0, next(titles) + "\n", "")
+            return CmdResult(0, "", "")
+
+    cfg = load_config()
+    pm = PermissionManager(cfg, confirmer=Asker(True), root=tmp_path)
+    reg = ToolRegistry(pm, 8000, 30)
+    runner = Changing()
+    register_desktop(reg, DesktopConfig.from_config(cfg), runner, lambda n: "/x")
+    titles = iter(["Firefox", "Otra ventana"])
+    r = run(reg.execute(call("window_action", id="{aaaaaaaa-1111}", action="close")))
+    assert not r.ok and "cambio" in r.text and all(c[1] != "windowclose" for c in runner.calls)
+
+
+def test_window_action_denied_missing_window_or_bad_id(tmp_path):
     reg, runner, *_ = build(tmp_path, WIN, asker=Asker(False))
-    r = run(reg.execute(call("window_action", id="{aaaaaaaa-1111}", title="Firefox", action="close")))
-    assert r.denied and runner.calls == []
+    r = run(reg.execute(call("window_action", id="{aaaaaaaa-1111}", action="close")))
+    assert r.denied and all(c[1] != "windowclose" for c in runner.calls)
     reg, runner, *_ = build(tmp_path, WIN)
-    assert not run(reg.execute(call("window_action", id="x; reboot", title="a", action="close"))).ok and runner.calls == []
+    assert not run(reg.execute(call("window_action", id="x; reboot", action="close"))).ok
+    r = run(reg.execute(call("window_action", id="{cccccccc-3333}", action="close")))  # sin titulo: no existe
+    assert not r.ok and "no existe" in r.text
+
+
+def test_list_windows_runs_lookups_one_at_a_time_and_reports_empty_titles(tmp_path):
+    live = {"now": 0, "max": 0}
+
+    class Slow(FakeRunner):
+        async def __call__(self, argv, timeout):
+            if argv[1] == "getwindowname":
+                live["now"] += 1
+                live["max"] = max(live["max"], live["now"])
+                await asyncio.sleep(0.01)
+                live["now"] -= 1
+            return await super().__call__(argv, timeout)
+
+    cfg = load_config()
+    pm = PermissionManager(cfg, root=tmp_path)
+    reg = ToolRegistry(pm, 8000, 30)
+    register_desktop(reg, DesktopConfig.from_config(cfg), Slow(WIN), lambda n: "/x")
+    assert run(reg.execute(call("list_windows"))).ok and live["max"] == 1
+    reg, *_ = build(tmp_path, {"search": CmdResult(0, "{aaaaaaaa-1111}\n", ""), "getwindowname": CmdResult(1, "", "boom")})
+    r = run(reg.execute(call("list_windows")))
+    assert not r.ok and "ningun titulo" in r.text
+
+
+def test_window_action_by_match_resolves_single_window_and_shows_real_title(tmp_path):
+    asker = ReqAsker(True)
+    reg, runner, *_ = build(tmp_path, WIN, asker=asker)
+    r = run(reg.execute(call("window_action", match="firefox", action="minimize")))
+    assert r.ok and runner.calls[-1] == ["kdotool", "windowminimize", "{aaaaaaaa-1111}"]
+    assert "'Firefox'" in asker.reqs[0].description
+
+
+def test_window_action_by_match_rejects_zero_or_many_matches_without_asking(tmp_path):
+    asker = ReqAsker(True)
+    reg, runner, *_ = build(tmp_path, {"search": CmdResult(0, "{aaaaaaaa-1111}\n{bbbbbbbb-2222}\n", ""),
+                                       "getwindowname": CmdResult(0, "Terminal\n", "")}, asker=asker)
+    r = run(reg.execute(call("window_action", match="terminal", action="close")))
+    assert not r.ok and "2 ventanas" in r.text and "Terminal" not in r.text  # sin titulos de terceros en el error
+    r = run(reg.execute(call("window_action", match="nada", action="close")))
+    assert not r.ok and "ninguna" in r.text
+    assert asker.reqs == [] and all(c[1] != "windowclose" for c in runner.calls)
+
+
+def test_window_action_needs_exactly_one_of_id_or_match(tmp_path):
+    reg, runner, *_ = build(tmp_path, WIN)
+    assert not run(reg.execute(call("window_action", action="close"))).ok
+    assert not run(reg.execute(call("window_action", id="{aaaaaaaa-1111}", match="x", action="close"))).ok
+    assert all(c[1] != "windowclose" for c in runner.calls)
+
+
+def test_model_text_never_reaches_kdotool_argv(tmp_path):
+    # kdotool inserta los patrones en un script JS de KWin: el texto del modelo no debe pasar nunca por ahi
+    reg, runner, *_ = build(tmp_path, WIN)
+    run(reg.execute(call("window_action", match='"); callDBus(...); ("', action="close")))
+    assert all('callDBus' not in " ".join(c) for c in runner.calls)
 
 
 # -- servicios -------------------------------------------------------------------------------------------------
@@ -314,7 +460,7 @@ def test_routine_with_missing_tool_is_skipped_and_no_tool_registered(tmp_path):
 def test_routine_inner_denial_is_reported(tmp_path):
     asker = ReqAsker(iter([True, False]))
     # la rutina se confirma, pero un paso de nivel 3 se rechaza: queda registrado y se detiene
-    r_ = {"d": {"steps": [{"tool": "window_action", "args": {"id": "{aaaaaaaa-1111}", "title": "X", "action": "close"}},
+    r_ = {"d": {"steps": [{"tool": "window_action", "args": {"id": "{aaaaaaaa-1111}", "action": "close"}},
                           {"tool": "get_volume"}]}}
     reg, runner, *_ = routine_setup(tmp_path, r_, asker, replies=WIN)
     res = run(reg.execute(call("run_automation", name="d")))

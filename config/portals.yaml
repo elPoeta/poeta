@@ -1,0 +1,20 @@
+# Portales XDG (xdg-desktop-portal): atajo global y capturas de pantalla.
+# El propio escritorio (KDE) pide tu permiso la primera vez y guarda la captura; POETA nunca lee la pantalla por su cuenta.
+# Requiere: uv pip install dbus-fast   (y xdg-desktop-portal-kde, ya incluido en Fedora KDE)
+# Probar antes: python scripts/portal_probe.py
+enabled: false
+
+app_id: org.poeta.Assistant      # identifica a POETA ante el portal (ver scripts/install_portals.py)
+
+shortcuts:
+  enabled: true
+  talk:
+    description: Hablar con POETA (o interrumpirlo)
+    trigger: CTRL+ALT+SPACE      # sugerido: puedes cambiarlo despues en Preferencias del sistema -> Atajos
+  stop:
+    description: Callar a POETA
+    trigger: ""                  # sin atajo sugerido: lo asignas tu en Preferencias del sistema
+
+screenshot:
+  enabled: true                  # herramienta `screenshot` (permiso screen_capture, siempre pide confirmacion)
+  timeout_s: 30

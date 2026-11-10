@@ -58,7 +58,7 @@ class EventBus:
         except Exception:  # noqa: BLE001 - un suscriptor roto no debe tumbar a POETA
             log.exception("suscriptor del bus fallo (evento %s)", ev.kind)
 
-    def publish(self, kind: str, **data: Any) -> Event:
+    def publish(self, kind: str, /, **data: Any) -> Event:
         ev = Event(kind, data)
         with self._lock:
             self._history.append(ev)

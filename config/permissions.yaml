@@ -60,6 +60,7 @@ actions:
   process_read: 1  # listar procesos propios
   process_stop: 3  # pedir a un proceso propio que termine (SIGTERM)
   run_automation: 3  # ejecutar una rutina de config/automations.yaml
+  screen_capture: 3  # captura de pantalla por el portal XDG (se guarda en tu equipo)
   privileged: never
   camera_capture: 2
 

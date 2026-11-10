@@ -30,6 +30,8 @@ CONFIG_FILES = (
     "tools",
     "desktop",
     "automations",
+    "ui",
+    "portals",
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -133,6 +135,48 @@ def _validate(cfg: dict[str, dict[str, Any]]) -> None:
         load_routines(cfg)
     except (DesktopConfigError, RoutineConfigError) as exc:
         raise ConfigError(f"desktop.yaml/automations.yaml: {exc}") from exc
+
+    from poeta.core.reasoning import ReasoningConfigError, ReasoningPolicy
+
+    try:
+        ReasoningPolicy.from_config(cfg)
+    except ReasoningConfigError as exc:
+        raise ConfigError(f"settings.yaml: {exc}") from exc
+
+    ui = (cfg["ui"].get("ipc") or {})
+    if not isinstance(ui.get("enabled", True), bool):
+        raise ConfigError("ui.yaml: ipc.enabled debe ser true o false")
+    if ui.get("socket") is not None and not (isinstance(ui["socket"], str) and ui["socket"].strip()):
+        raise ConfigError("ui.yaml: ipc.socket debe ser una ruta o null")
+    iv = ui.get("resources_interval_s", 2)
+    if isinstance(iv, bool) or not isinstance(iv, (int, float)) or not 0.5 <= iv <= 60:
+        raise ConfigError("ui.yaml: ipc.resources_interval_s debe estar entre 0.5 y 60")
+    vc = (cfg["voice"].get("confirm") or {})
+    for key in ("enabled", "allow_explicit", "allow_tainted"):
+        if not isinstance(vc.get(key, False), bool):
+            raise ConfigError(f"voice.yaml: confirm.{key} debe ser true o false")
+    if not isinstance(vc.get("explicit_phrase", "x"), str) or len(str(vc.get("explicit_phrase", "x")).split()) < 2:
+        raise ConfigError("voice.yaml: confirm.explicit_phrase debe tener al menos dos palabras")
+    for key, lo, hi in (("timeout_s", 3, 120), ("retries", 0, 5), ("service_timeout_s", 5, 600)):
+        v = vc.get(key)
+        if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or not lo <= v <= hi):
+            raise ConfigError(f"voice.yaml: confirm.{key} debe estar entre {lo} y {hi}")
+    from poeta.portals.shortcuts import PortalsConfig, PortalsConfigError
+
+    try:
+        PortalsConfig.from_config(cfg)
+    except PortalsConfigError as exc:
+        raise ConfigError(f"portals.yaml: {exc}") from exc
+    hud = cfg["ui"].get("hud") or {}
+    if hud.get("corner", "bottom-right") not in ("top-left", "top-right", "bottom-left", "bottom-right"):
+        raise ConfigError("ui.yaml: hud.corner debe ser top-left, top-right, bottom-left o bottom-right")
+    for key, lo, hi in (("size", 40, 400), ("margin", 0, 500), ("opacity", 0.2, 1.0)):
+        v = hud.get(key)
+        if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or not lo <= v <= hi):
+            raise ConfigError(f"ui.yaml: hud.{key} debe estar entre {lo} y {hi}")
+    for key in ("hide_when_idle", "click_through", "always_on_top"):
+        if not isinstance(hud.get(key, False), bool):
+            raise ConfigError(f"ui.yaml: hud.{key} debe ser true o false")
 
     name = (cfg["settings"].get("assistant") or {}).get("name")
     if not isinstance(name, str) or not name.strip():

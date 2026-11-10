@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import queue
 import re
@@ -321,6 +322,24 @@ class SpeechPipeline:
 
     def wait(self, timeout: float | None = None) -> bool:
         return self._idle.wait(timeout)
+
+    @contextlib.contextmanager
+    def open_mic(self):
+        """Libera el silencio del micro que mantiene el turno de habla (p. ej. para oir una confirmacion) y lo restituye."""
+        with self._lock:
+            was, self._held = self._held, False
+        if was:
+            self.audio.release_mute()
+        try:
+            yield
+        finally:
+            if was:
+                with self._lock:
+                    again = not self._held and not self._idle.is_set()  # si el turno ya termino, no hay que volver a silenciar
+                    if again:
+                        self._held = True
+                if again:
+                    self.audio.hold_mute()
 
     # -- hilo --
     def _run(self) -> None:

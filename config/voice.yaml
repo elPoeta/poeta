@@ -41,3 +41,15 @@ tts:
     model: null            # ruta a la voz .onnx (junto a su .onnx.json)
     binary: piper
     length_scale: 1.0
+
+# Confirmar permisos hablando (ademas del teclado y los gestos). El microfono no distingue quien habla: cualquier voz o
+# audio cercano podria responder "si". Mitigaciones: solo vale una palabra suelta (si/dale/autorizo o no/cancelar),
+# nunca envios a la nube, y lo explicito o posterior a datos no confiables queda fuera salvo que lo habilites.
+confirm:
+  enabled: true
+  allow_explicit: false        # nivel 4: exige decir la frase exacta (explicit_phrase) en vez de teclear CONFIRMAR
+  explicit_phrase: confirmo la accion
+  allow_tainted: false         # acciones pedidas tras leer web/herramientas/MCP (riesgo de inyeccion)
+  timeout_s: 20                # cuanto escucha antes de rendirse (quedan el teclado y los gestos)
+  retries: 2                   # respuestas no validas tolerables antes de rendirse
+  service_timeout_s: 60        # modo servicio (--headless): cuanto esperar antes de denegar

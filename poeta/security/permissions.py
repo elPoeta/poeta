@@ -48,6 +48,7 @@ RECOMMENDED = {
 SUGGESTED_ACTIONS = {
     "camera_capture": 2, "desktop_notify": 1, "desktop_read": 1, "desktop_control": 2, "window_control": 3,
     "service_read": 1, "service_control": 3, "process_read": 1, "process_stop": 3, "run_automation": 3,
+    "screen_capture": 3,
 }
 # Acciones que operan sobre una ruta (details["path"]).
 PATH_ACTIONS = {"read_authorized_file", "create_document", "modify_file", "delete_data"}

@@ -22,16 +22,20 @@ from typing import Any
 
 from poeta.config import PROJECT_ROOT, ConfigError, assistant_name, load_config, system_prompt
 from poeta.gestures import (GestureConfig, GestureEngine, GestureHub, GesturePolicy, GestureService,
-                            load_calibration, make_gesture_confirmer)
+                            load_calibration, make_announcing_confirmer, make_gesture_confirmer)
 from poeta.vision import CameraConfig, CameraManager, VisionConfigError
 from poeta.vision.hands import HandsConfig, HandTracker
 from poeta.automation import DesktopConfig, load_routines, register_desktop, register_routines
 from poeta.core import AgentCore, EventBus
+from poeta.core.reasoning import MODES as REASONING_MODES, ReasoningPolicy
 from poeta.envfile import load_env_file
 from poeta.interface import cli_confirmer, make_cli_confirmer
+from poeta.portals import PortalBus, PortalsConfig, ShortcutService, register_screenshot
+from poeta.voice.confirm import (VoiceConfirmConfig, VoiceConfirmer, make_headless_base, make_voice_confirmer)
 from poeta.logging_setup import setup_logging
 from poeta.memory import KINDS, MemoryStore, MemoryStoreError
-from poeta.monitoring import MetricsLog, Sampler, summarize
+from poeta.ipc import IpcClient, IpcError, UiServer, build_handlers
+from poeta.monitoring import MetricsLog, ResourceMonitor, Sampler, summarize
 from poeta.models import ModelRouter, RouterError
 from poeta.providers import ProviderError, ToolCall
 from poeta.tools import ToolRegistry, ToolsConfig, register_builtin
@@ -48,6 +52,7 @@ HELP = """Comandos:
   /forget ID                Olvida una nota
   /prefer CLAVE=VALOR       Guarda una preferencia (sin argumentos: las lista)
   /unprefer CLAVE           Borra una preferencia
+  /reasoning auto|on|off|server  Razonamiento del modelo local (auto: solo si hace falta para herramientas)
   /run NOMBRE               Ejecuta una rutina de config/automations.yaml
   /tools                    Herramientas disponibles (integradas y MCP)
   /conversations            Lista las conversaciones guardadas
@@ -86,6 +91,15 @@ async def run_command(line: str, router: ModelRouter, agent: AgentCore) -> bool:
         return True
     if cmd == "/help":
         print(HELP)
+    elif cmd == "/reasoning":
+        pol = agent.reasoning
+        if pol is None:
+            print("El control de razonamiento no esta disponible.")
+        elif arg in REASONING_MODES:
+            pol.mode = arg
+            print(f"Razonamiento: {arg}")
+        else:
+            print(f"Razonamiento: {pol.mode}. Uso: /reasoning {'|'.join(REASONING_MODES)}")
     elif cmd == "/run":
         reg = agent.tools
         if reg is None or reg.get("run_automation") is None:
@@ -219,6 +233,8 @@ def build_agent(cfg: dict, provider: str | None, model: str | None, confirmer=No
     tools_cfg = ToolsConfig.from_config(cfg)
     registry = None
     mcp = None
+    pcfg = PortalsConfig.from_config(cfg)
+    portal = PortalBus() if pcfg.enabled else None
     if tools_cfg.enabled:
         registry = ToolRegistry(permissions, tools_cfg.max_output_chars, tools_cfg.timeout_s)
         register_builtin(registry, tools_cfg, PROJECT_ROOT)
@@ -235,6 +251,8 @@ def build_agent(cfg: dict, provider: str | None, model: str | None, confirmer=No
             print(f"Aviso de permisos: falta la accion '{kind}' en permissions.yaml (se denegara). "
                   f"Agrega en 'actions:' la linea  {kind}: {level}", file=sys.stderr)
         mcp = McpManager(McpConfig.from_config(cfg), registry, PROJECT_ROOT, audit)
+        if portal is not None and register_screenshot(registry, portal, pcfg):
+            logging.getLogger("poeta").info("herramienta de captura (portal XDG) registrada")
     agent = AgentCore(
         router,
         system_prompt=system_prompt(cfg),
@@ -243,8 +261,10 @@ def build_agent(cfg: dict, provider: str | None, model: str | None, confirmer=No
         memory_cfg=cfg["memory"],
         tools=registry,
         max_tool_rounds=tools_cfg.max_tool_rounds,
+        reasoning=ReasoningPolicy.from_config(cfg),
     )
     agent.mcp = mcp  # se inicia/detiene con start_mcp/stop_mcp
+    agent.portal = portal
     agent.audit = audit
     return router, agent, memory
 
@@ -265,6 +285,9 @@ async def stop_mcp(agent: AgentCore) -> None:
     mcp = getattr(agent, "mcp", None)
     if mcp is not None:
         await mcp.stop()
+    portal = getattr(agent, "portal", None)
+    if portal is not None:
+        await portal.close()
 
 
 def show_tool_event(ev, out=print) -> None:
@@ -328,6 +351,62 @@ async def _chat_loop(cfg: dict, router: ModelRouter, agent: AgentCore) -> int:
             print("Aviso: la memoria fallo y esta conversacion puede no haberse guardado (ver logs/poeta.log).\n")
 
 
+async def start_ui(cfg: dict, bus: EventBus, router: ModelRouter, agent: AgentCore, loop, hub: GestureHub):
+    """Servidor local del panel + monitor de recursos. Si falla, POETA sigue sin panel."""
+    ipc = cfg["ui"].get("ipc") or {}
+    if not ipc.get("enabled", True):
+        return None, None
+    monitor = ResourceMonitor(bus, float(ipc.get("resources_interval_s", 2)))
+    snapshot, handlers = build_handlers(router, agent, bus, audit_path(cfg, PROJECT_ROOT), loop, hub, monitor)
+    server = UiServer(bus, snapshot, handlers, ipc.get("socket"))
+    try:
+        await server.start()
+    except (IpcError, OSError) as exc:
+        print(f"Panel desactivado: {exc}", file=sys.stderr)
+        return None, None
+    monitor.start()
+    return server, monitor
+
+
+async def start_shortcuts(cfg: dict, portal, keys, loop):
+    """Atajo global (portal XDG): 'talk' equivale a Enter (hablar / interrumpir) y 'stop' calla a POETA."""
+    pcfg = PortalsConfig.from_config(cfg)
+    if portal is None or not (pcfg.enabled and pcfg.shortcuts_enabled):
+        return None
+    svc = ShortcutService(portal, pcfg, {"talk": lambda: keys.put(""), "stop": loop.interrupt})
+    if not await svc.start():
+        print(f"Atajo global desactivado: {svc.error}", file=sys.stderr)
+        return None
+    keys_txt = ", ".join(f"{n}: {pcfg.shortcuts[n][1] or 'sin tecla asignada'}" for n in svc.bound)
+    print(f"Atajos globales activos ({keys_txt}). Se pueden cambiar en Preferencias del sistema -> Atajos.")
+    return svc
+
+
+def events_cmd() -> int:
+    """Muestra en vivo lo que el agente publica para el panel (diagnostico, sin interfaz grafica)."""
+    async def go() -> int:
+        client = IpcClient()
+        try:
+            await client.connect()
+        except (OSError, asyncio.TimeoutError):
+            print("No hay un POETA corriendo con el panel habilitado (python main.py voice ...).", file=sys.stderr)
+            return 1
+        print(f"Conectado. Estado: {client.snapshot.get('state') if client.snapshot else '?'}. Ctrl+C sale.")
+        try:
+            async for ev in client.events():
+                print(f"{ev['kind']:<10} {json.dumps(ev['data'], ensure_ascii=False)}")
+        except ConnectionError:
+            print("El agente cerro la conexion.")
+        finally:
+            await client.close()
+        return 0
+
+    try:
+        return asyncio.run(go())
+    except KeyboardInterrupt:
+        return 0
+
+
 async def deny_without_keyboard(req, explicit: bool) -> bool:
     """Confirmador del modo servicio: sin teclado no hay a quien preguntar, asi que se deniega (salvo gestos)."""
     print(f"(sin teclado: se deniega '{req.description}'; solo se puede confirmar con gestos acciones de nivel 3)")
@@ -372,14 +451,29 @@ async def voice(cfg: dict, provider: str | None, model: str | None, resume_last:
     keys = LineQueue()  # unico lector de teclado: tambien responde las confirmaciones de permisos
     bus = EventBus()
     hub = GestureHub(GesturePolicy.from_config(cfg), bus)
-    confirmer = make_cli_confirmer(keys.ask) if not headless else deny_without_keyboard
+    vcfg = VoiceConfirmConfig.from_config(cfg)
+    vconf = VoiceConfirmer(vcfg)
+    if not headless:
+        confirmer = make_cli_confirmer(keys.ask)
+    elif gestures or vcfg.enabled:
+        confirmer = make_headless_base(vcfg.service_timeout_s)  # espera gestos/voz y deniega al vencer
+    else:
+        confirmer = deny_without_keyboard
     if gestures:
         confirmer = make_gesture_confirmer(confirmer, hub)
+    if vcfg.enabled:
+        confirmer = make_voice_confirmer(confirmer, vconf, bus)
+
+    def channels(req, explicit) -> list[str]:
+        return ([] if headless else ["teclado"]) + (["gestos"] if hub.eligible(req, explicit) else []) + (
+            ["voz"] if vconf.eligible(req, explicit) else [])
+
+    confirmer = make_announcing_confirmer(confirmer, bus, channels)
     built = build_agent(cfg, provider, model, confirmer=confirmer)
     if built is None:
         return 1
     router, agent, memory = built
-    hub.audit = getattr(agent, "audit", None)
+    hub.audit = vconf.audit = getattr(agent, "audit", None)
     audio = None
     pipe = None
     try:
@@ -410,6 +504,9 @@ async def voice(cfg: dict, provider: str | None, model: str | None, resume_last:
             audio.stop()
         return 1
     pipe = SpeechPipeline(engine, audio, on_error=lambda e: print(f"\n(error de voz: {e})"))
+    vconf.attach(audio, stt, pipe)
+    if vcfg.enabled:
+        print("Confirmacion por voz activa: POETA te preguntara en voz alta; responde 'si' o 'no'.")
 
     st = router.status()
     print(f"{assistant_name(cfg)} listo por voz. Proveedor: {st['provider']}  Modelo: {st['model']}")
@@ -439,9 +536,17 @@ async def voice(cfg: dict, provider: str | None, model: str | None, resume_last:
                      meta={"provider": st["provider"], "model": st["model"], "stt": f"{stt.config.model}/{stt_device}",
                            **({"tag": tag} if tag else {})})
     hub.on_interrupt = loop.interrupt
+    ui_server, monitor = await start_ui(cfg, bus, router, agent, loop, hub)
+    shortcuts = await start_shortcuts(cfg, getattr(agent, "portal", None), keys, loop)
     try:
         return await loop.run()
     finally:
+        if shortcuts is not None:
+            await shortcuts.stop()
+        if ui_server is not None:
+            await ui_server.stop()
+        if monitor is not None:
+            await monitor.stop()
         if gesture_svc is not None:
             gesture_svc.stop()
         if camera is not None:
@@ -524,6 +629,7 @@ def metrics_cmd(last: int) -> int:
     groups: dict[str, list] = {}
     for r in rows:  # separa configuraciones: no mezclar la P16 con GPU y el otro equipo, ni nube con local
         key = (f"proveedor {r.get('provider', '?')} / {r.get('model', '?')} | STT {r.get('stt', '?')}"
+               + (f" | razonamiento: {'on' if r['think'] else 'off'}" if "think" in r else "")
                + (f" | etiqueta: {r['tag']}" if r.get("tag") else ""))
         groups.setdefault(key, []).append(r)
     names = {"stt_s": "STT", "reasoning_s": "empieza a razonar", "first_text_s": "primer texto",
@@ -639,6 +745,9 @@ def main() -> int:
     tool_p = sub.add_parser("tool", help="Ejecuta una herramienta sin el modelo (diagnostico)")
     tool_p.add_argument("name", nargs="?", help="Nombre de la herramienta, o 'list'")
     tool_p.add_argument("args", nargs="?", help="Argumentos en JSON, ej: '{\"name\": \"Firefox\"}'")
+    sub.add_parser("panel", help="Abre el panel grafico (requiere PySide6 y un POETA corriendo)")
+    sub.add_parser("hud", help="Abre el HUD flotante con el estado de POETA (requiere PySide6)")
+    sub.add_parser("events", help="Muestra en vivo el estado que POETA publica para el panel (diagnostico)")
     met_p = sub.add_parser("metrics", help="Resumen de latencias y recursos de los turnos de voz")
     met_p.add_argument("--last", type=int, default=0, help="Solo los ultimos N turnos")
     mcp_p = sub.add_parser("mcp", help="Servidores MCP")
@@ -670,6 +779,23 @@ def main() -> int:
                                  args.headless, args.tag))
     if args.command == "audit":
         return audit_cmd(cfg, args.verify, args.tail)
+    if args.command == "panel":
+        try:
+            from poeta.ui.panel import run_panel
+        except ImportError:
+            print("Falta PySide6: uv pip install PySide6-Essentials", file=sys.stderr)
+            return 1
+        return run_panel((cfg.get("ui", {}).get("ipc") or {}).get("socket"))
+    if args.command == "hud":
+        try:
+            from poeta.ui.hud import run_hud
+        except ImportError:
+            print("Falta PySide6: uv pip install PySide6-Essentials", file=sys.stderr)
+            return 1
+        ui = cfg.get("ui", {})
+        return run_hud((ui.get("ipc") or {}).get("socket"), ui.get("hud"))
+    if args.command == "events":
+        return events_cmd()
     if args.command == "metrics":
         return metrics_cmd(args.last)
     if args.command == "tool":

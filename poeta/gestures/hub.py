@@ -107,3 +107,30 @@ def make_gesture_confirmer(base: Callable[..., Any], hub: GestureHub) -> Callabl
             await asyncio.gather(key, fut, return_exceptions=True)
 
     return confirm
+
+
+def make_announcing_confirmer(base: Callable[..., Any], bus: Any,
+                              channels: Callable[[Any, bool], list[str]] | None = None) -> Callable[..., Any]:
+    """Publica en el bus que se pidio una confirmacion, por que canales se puede responder y que se decidio.
+
+    El evento lleva la accion (`kind`), la herramienta y una descripcion corta para que el panel y el HUD muestren
+    QUE se esta pidiendo; el contenido completo (`payload`) nunca sale por aca.
+    """
+
+    async def confirm(req: Any, explicit: bool) -> bool:
+        try:
+            via = list(channels(req, explicit)) if channels else []
+        except Exception:  # noqa: BLE001
+            via = []
+        info = {"kind": req.kind, "tool": (req.details or {}).get("tool"), "explicit": bool(explicit),
+                "tainted": bool(getattr(req, "tainted", False)), "via": via}
+        bus.publish("permission", phase="request", description=" ".join(str(req.description).split())[:120], **info)
+        allowed = False
+        try:
+            allowed = await base(req, explicit)
+            return allowed
+        finally:
+            bus.publish("permission", phase="decided", allowed=bool(allowed), **info)
+            bus.set_state("thinking")
+
+    return confirm

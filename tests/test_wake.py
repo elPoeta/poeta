@@ -145,3 +145,20 @@ def test_wake_mode_requires_detector():
             VoiceLoop(audio=None, stt=None, pipeline=None, agent=None, keys=LineQueue(), mode="wake")
 
     asyncio.run(go())
+
+
+def test_global_shortcut_or_enter_talks_without_wake_word():
+    """El atajo global del portal equivale a Enter: en modo wake escucha ya, sin pedir la palabra de activacion."""
+    go, audio, pipe, wake_stt, main_stt, out = wake_loop([], [], ["abrí el navegador"], [["Listo."]])
+
+    async def script(keys, audio):
+        await asyncio.sleep(0.2)
+        audio.utts.append(UTT)
+        keys.put("")  # lo que hace el atajo global
+        await asyncio.sleep(0.6)
+        while audio.real.speaking:
+            audio.real._on_output(np.zeros((4800, 1), np.float32), 4800, None, None)
+        await asyncio.sleep(0.2)
+
+    agent = asyncio.run(go(script))
+    assert agent.heard == ["abrí el navegador"] and wake_stt.calls == []

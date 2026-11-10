@@ -27,6 +27,7 @@ from typing import Any, AsyncIterator
 from poeta.memory import MemoryStore, build_memory_block
 from poeta.models import ModelRouter
 from poeta.providers import ToolCall
+from poeta.core.reasoning import ReasoningPolicy
 from poeta.tools import ToolRegistry, ToolResult
 
 log = logging.getLogger("poeta.core")
@@ -50,6 +51,7 @@ class AgentCore:
         memory_cfg: dict[str, Any] | None = None,
         tools: ToolRegistry | None = None,
         max_tool_rounds: int = 6,
+        reasoning: ReasoningPolicy | None = None,
     ) -> None:
         self.router = router
         self.system_prompt = system_prompt
@@ -62,6 +64,8 @@ class AgentCore:
         self.memory_errors = 0
         self.tools = tools
         self.max_tool_rounds = max_tool_rounds
+        self.reasoning = reasoning
+        self.last_reasoning: bool | None = None  # decision del ultimo turno (para las metricas)
 
     # -- conversaciones --------------------------------------------------------------
 
@@ -152,6 +156,11 @@ class AgentCore:
         registry = self.tools
         if registry is not None and tools is None and registry.names():
             tools = registry.specs()
+        self.last_reasoning = None
+        if self.reasoning is not None:
+            extra, self.last_reasoning = self.reasoning.params_for(
+                user_text, bool(tools), self.router.active.is_cloud)
+            params = {**extra, **params}  # lo que pida quien llama manda sobre la politica
         self.history.append({"role": "user", "content": user_text})
         parts: list[str] = []
         work: list[dict[str, Any]] = []  # mensajes de herramientas de ESTE turno (no van al historial)

@@ -1,0 +1,16 @@
+# Panel y HUD (secc. 13). El agente expone un socket local PRIVADO (0600, solo tu usuario) por el que el panel
+# recibe el estado en vivo y envia unos pocos comandos permitidos. Cerrar el panel no afecta al agente.
+ipc:
+  enabled: true
+  socket: null               # null = $XDG_RUNTIME_DIR/poeta/ui.sock
+  resources_interval_s: 2    # cada cuanto se miden RAM/GPU para el panel
+
+# HUD: circulo flotante que muestra el estado (python main.py hud). Proceso aparte, no afecta al agente.
+hud:
+  corner: bottom-right       # top-left | top-right | bottom-left | bottom-right
+  size: 96                   # px
+  margin: 24                 # px desde el borde
+  opacity: 0.9
+  hide_when_idle: false      # true: solo aparece cuando POETA hace algo
+  click_through: true        # true: los clics atraviesan el HUD (no se puede arrastrar)
+  always_on_top: true        # en KDE Wayland puede requerir una regla de ventana (ver README)

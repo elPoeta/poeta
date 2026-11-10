@@ -190,3 +190,46 @@ antes de actuar. Una rutina solo la nombra el modelo: sus pasos son fijos y cada
 - **Servicio supervisado:** `python scripts/install_service.py [--gestures]` instala `poeta.service` (usuario, con reinicio
   automatico). Corre `voice --wake --headless`: sin teclado, las confirmaciones solo pueden darse por gestos y el resto se
   deniega. `systemctl --user enable --now poeta` y `journalctl --user -u poeta -f`.
+
+## Fase 8a — servidor local para el panel
+
+`voice`/`chat` abren un socket Unix (`$XDG_RUNTIME_DIR/poeta/ui.sock`, 0600, solo tu uid) con protocolo JSON-lines
+(config en `config/ui.yaml`). El agente no depende del panel: si nadie se conecta, no cuesta nada.
+Para ver eventos en vivo mientras corre `voice`: `python main.py events`.
+
+## Fase 8b — panel gráfico
+
+`uv pip install PySide6-Essentials` y, con `voice` corriendo: `python main.py panel`.
+Es un proceso aparte: cerrarlo no afecta al agente, y si el agente se reinicia el panel se reconecta solo.
+Pestañas: Estado (proveedor, razonamiento, RAM/VRAM, último turno, eventos), Historial, Memoria, Herramientas/MCP, Seguridad (auditoría).
+
+## Fase 8c — HUD flotante
+
+`python main.py hud` (con `voice` corriendo). Círculo animado que cambia de color/animación según el estado
+(escuchando, transcribiendo, pensando, herramienta, hablando, confirmación). Ajustes en `config/ui.yaml` → `hud`.
+Solo lee eventos: no puede mandar órdenes ni confirmar nada, y con `click_through: true` los clics lo atraviesan.
+
+**KDE Wayland:** una app no puede fijar su posición ni forzar "siempre encima"; si el HUD no queda donde querés,
+creá una regla en Preferencias del sistema → Ventanas → Reglas de ventana: coincidencia por título `POETA HUD`,
+con "Posición" (Forzar), "Mantener por encima" (Forzar: Sí) y "Saltar la barra de tareas" (Sí).
+
+## Fase 8d — confirmar por voz, permisos en el HUD y portales XDG
+
+**Confirmar permisos hablando** (apagado por defecto):
+`python scripts/add_voice_confirm.py --enable` (agrega `confirm:` a `config/voice.yaml` sin tocar el resto).
+POETA dice qué permiso pide, espera a terminar de hablar y escucha; solo cuenta un enunciado que sea *exactamente*
+«sí / dale / autorizo» o «no / cancelar». Sigue valiendo el teclado y los gestos (gana el primero).
+Límites a propósito: el micrófono no distingue quién habla, así que **nunca** por voz los envíos a la nube; lo explícito
+(nivel 4) y lo pedido tras leer web/MCP solo si activas `allow_explicit` (frase fija) / `allow_tainted`.
+Se audita que hubo confirmación por voz (acción y resultado), nunca la grabación ni lo transcripto.
+En modo servicio (`--headless`) los gestos y la voz ahora sí pueden contestar (antes se denegaba al instante); sin respuesta
+en `service_timeout_s` se deniega.
+
+**HUD con permisos:** al pedirse un permiso, el HUD se ensancha con una tarjeta: qué se pide, si es explícito o vino
+tras leer contenido externo, y por qué canales puedes contestar (voz / gestos / teclado). El panel muestra lo mismo.
+
+**Portales XDG** (`config/portals.yaml`, `enabled: false` por defecto):
+1. `uv pip install dbus-fast` y `python scripts/add_permission_actions.py` (agrega `screen_capture: 3`).
+2. `python scripts/install_portals.py` y `python scripts/portal_probe.py --shot` para comprobar atajo y captura.
+3. Poner `enabled: true`. El atajo `CTRL+ALT+SPACE` equivale a Enter (hablar/interrumpir, también en modo wake, sin
+   decir «poeta»); la herramienta `screenshot` guarda la captura como archivo y devuelve la ruta (siempre pide confirmación).

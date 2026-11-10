@@ -169,6 +169,8 @@ class VoiceLoop:
             handled = await self._handle_line(pending)
             if handled:
                 return True
+            if handled is None:  # Enter o atajo global "hablar": escucha ahora, sin palabra de activacion
+                return await self._listen_once(self.listen_timeout)
         if self.mode == "wake":
             return await self._wake_once()
         return await self._listen_once(0.5, quiet=True)
@@ -366,7 +368,8 @@ class VoiceLoop:
                "first_audio_s": (max(0.0, self.pipe.first_audio_s - waited) if self.pipe.first_audio_s is not None
                                  else None),
                "auth_wait_s": round(waited, 2) if waited > 0 else None, "total_s": round(max(0.0, total - waited), 2),
-               "interrupted": interrupted, "tools": tools}
+               "interrupted": interrupted, "tools": tools,
+               "think": getattr(self.agent, "last_reasoning", None)}
         row = {k: (round(v, 3) if isinstance(v, float) else v) for k, v in row.items() if v is not None}
         try:
             if self.sampler is not None:

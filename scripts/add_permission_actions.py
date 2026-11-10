@@ -21,6 +21,7 @@ COMMENTS = {
     "service_control": "iniciar/detener servicios (ademas: desktop.services.allowlist)",
     "process_read": "listar procesos propios", "process_stop": "pedir a un proceso propio que termine (SIGTERM)",
     "run_automation": "ejecutar una rutina de config/automations.yaml",
+    "screen_capture": "captura de pantalla por el portal XDG (se guarda en tu equipo)",
 }
 
 

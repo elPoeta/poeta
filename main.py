@@ -357,7 +357,7 @@ async def start_gestures(cfg: dict, hub: GestureHub, agent: AgentCore):
 
 
 async def voice(cfg: dict, provider: str | None, model: str | None, resume_last: bool, always: bool,
-                wake: bool = False, gestures: bool = False, headless: bool = False) -> int:
+                wake: bool = False, gestures: bool = False, headless: bool = False, tag: str | None = None) -> int:
     import time
 
     from poeta.voice.audio import AudioConfig, AudioError, AudioManager
@@ -436,7 +436,8 @@ async def voice(cfg: dict, provider: str | None, model: str | None, resume_last:
                      wake=detector, followup_s=wcfg.followup_s if wcfg else 8.0,
                      chime=(make_chime(), 24000) if wcfg and wcfg.chime else None, on_command=on_command,
                      bus=bus, metrics=MetricsLog(PROJECT_ROOT / "logs" / "metrics.jsonl"), sampler=Sampler(),
-                     meta={"provider": st["provider"], "model": st["model"], "stt": f"{stt.config.model}/{stt_device}"})
+                     meta={"provider": st["provider"], "model": st["model"], "stt": f"{stt.config.model}/{stt_device}",
+                           **({"tag": tag} if tag else {})})
     hub.on_interrupt = loop.interrupt
     try:
         return await loop.run()
@@ -522,7 +523,8 @@ def metrics_cmd(last: int) -> int:
         return 0
     groups: dict[str, list] = {}
     for r in rows:  # separa configuraciones: no mezclar la P16 con GPU y el otro equipo, ni nube con local
-        key = f"proveedor {r.get('provider', '?')} / {r.get('model', '?')} | STT {r.get('stt', '?')}"
+        key = (f"proveedor {r.get('provider', '?')} / {r.get('model', '?')} | STT {r.get('stt', '?')}"
+               + (f" | etiqueta: {r['tag']}" if r.get("tag") else ""))
         groups.setdefault(key, []).append(r)
     names = {"stt_s": "STT", "reasoning_s": "empieza a razonar", "first_text_s": "primer texto",
              "first_audio_s": "primer audio", "total_s": "turno completo (incluye lo que tarda en hablar)"}
@@ -619,6 +621,7 @@ def main() -> int:
     voice_p.add_argument("--provider", help="Proveedor (por defecto, el de providers.yaml)")
     voice_p.add_argument("--model", help="Modelo")
     voice_p.add_argument("--continue", dest="resume_last", action="store_true", help="Retoma la ultima conversacion")
+    voice_p.add_argument("--tag", help="Etiqueta para las metricas de esta sesion (ej. reasoning-off) y compararlas despues")
     voice_p.add_argument("--headless", action="store_true",
                          help="Modo servicio: sin teclado (requiere --wake o --always); las confirmaciones solo por gestos")
     voice_p.add_argument("--gestures", action="store_true", help="Activa la camara y los gestos (palma, pulgares)")
@@ -664,7 +667,7 @@ def main() -> int:
         return asyncio.run(chat(cfg, args.provider, args.model, args.resume_last))
     if args.command == "voice":
         return asyncio.run(voice(cfg, args.provider, args.model, args.resume_last, args.always, args.wake, args.gestures,
-                                 args.headless))
+                                 args.headless, args.tag))
     if args.command == "audit":
         return audit_cmd(cfg, args.verify, args.tail)
     if args.command == "metrics":

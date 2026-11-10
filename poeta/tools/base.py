@@ -11,6 +11,7 @@ o superior exige confirmacion explicita (`tainted`).
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import re
@@ -40,7 +41,7 @@ class Tool:
     action: str | Callable[[dict[str, Any]], str]  # clave de `actions` en permissions.yaml
     untrusted: bool = False
     # (descripcion para el usuario, details para permisos/auditoria) a partir de los argumentos validados
-    describe: Callable[[dict[str, Any]], tuple[str, dict[str, Any]]] | None = None
+    describe: Callable[[dict[str, Any]], Any] | None = None  # puede ser sincrona o `async`
     source: str = "builtin"
     timeout_s: float | None = None  # sustituye al limite global del registro
 
@@ -143,7 +144,13 @@ class ToolRegistry:
             return ToolResult(call.name, f"Error: {err}.", ok=False)
 
         try:
-            desc, details = tool.describe(args) if tool.describe else (f"Ejecutar {tool.name}", {})
+            if tool.describe:
+                described = tool.describe(args)
+                if inspect.isawaitable(described):  # describe puede consultar el estado real antes de pedir confirmacion
+                    described = await described
+                desc, details = described
+            else:
+                desc, details = f"Ejecutar {tool.name}", {}
             kind = tool.action(args) if callable(tool.action) else tool.action
         except ToolError as exc:
             return ToolResult(call.name, f"Error: {exc}", ok=False)

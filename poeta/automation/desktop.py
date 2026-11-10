@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import signal
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -29,6 +30,8 @@ REQUIRES = {"notify": "notify-send", "media_status": "playerctl", "media_control
             "stop_process": None}
 _UNIT = re.compile(r"^[A-Za-z0-9@_.:-]{1,100}\.(service|timer|socket)$")
 _WINID = re.compile(r"^\{?[0-9A-Fa-f-]{8,40}\}?$")
+BROWSERS = ("firefox", "chromium", "chrome", "brave", "vivaldi", "opera", "edge", "zen", "librewolf", "waterfox")
+_PLAYER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$")
 CRITICAL = {"systemd", "init", "dbus-daemon", "dbus-broker", "dbus-broker-lau", "pipewire", "wireplumber", "kwin_wayland",
             "sddm", "sddm-helper", "login", "plasmashell", "polkitd", "NetworkManager"}
 
@@ -45,6 +48,7 @@ class DesktopConfig:
     max_volume_percent: int = 100
     service_allowlist: tuple[str, ...] = ()
     max_listed: int = 25
+    media_wait_s: float = 6.0
 
     @classmethod
     def from_config(cls, cfg: dict[str, Any]) -> "DesktopConfig":
@@ -65,7 +69,8 @@ class DesktopConfig:
             raise DesktopConfigError("desktop.services.allowlist debe ser una lista de unidades (nombre.service)")
         return cls(d.get("enabled", True) is True, num(d, "timeout_s", 10, 1, 120, float), on,
                    num(d.get("audio") or {}, "max_volume_percent", 100, 1, 150, int), tuple(allow),
-                   num(d.get("processes") or {}, "max_listed", 25, 1, 100, int))
+                   num(d.get("processes") or {}, "max_listed", 25, 1, 100, int),
+                   num(d.get("media") or {}, "wait_s", 6, 0, 60, float))
 
 
 def _clean(text: str, limit: int = 200) -> str:
@@ -110,11 +115,48 @@ def register_desktop(registry: ToolRegistry, cfg: DesktopConfig, runner: Runner 
     cmds = {"play": "play", "pause": "pause", "play_pause": "play-pause", "next": "next", "previous": "previous",
             "stop": "stop"}
 
+    async def players() -> list[tuple[str, str]]:
+        res = await sh(["playerctl", "-l"])
+        names = [n.strip() for n in res.out.splitlines() if _PLAYER.match(n.strip())] if not res.rc else []
+
+        async def status(n: str) -> str:
+            r = await sh(["playerctl", "-p", n, "status"])
+            return r.out.strip() if not r.rc else "?"
+
+        return list(zip(names, await asyncio.gather(*(status(n) for n in names))))
+
+    def is_browser(name: str) -> bool:
+        return name.lower().split(".")[0] in BROWSERS
+
+    def choose(found: list[tuple[str, str]], wanted: str | None) -> str:
+        if wanted:
+            hits = [n for n, _ in found if wanted.lower() in n.lower()]
+            if not hits:
+                raise ToolError(f"no hay un reproductor '{wanted}'. Activos: {', '.join(n for n, _ in found) or 'ninguno'}")
+            return hits[0]
+        playing = [n for n, st in found if st == "Playing"]
+        if playing:
+            return playing[0]
+        # Nadie suena: los navegadores casi siempre tienen una pestana en pausa; preferir una app de musica/video.
+        return next((n for n, _ in found if not is_browser(n)), found[0][0])
+
     async def media_control(a: dict[str, Any]) -> str:
-        res = await sh(["playerctl", cmds[a["command"]]])
+        if a.get("player") and not _PLAYER.match(a["player"]):
+            raise ToolError("nombre de reproductor invalido")
+        found = await players()
+        waited = 0.0
+        # Acaba de abrirse la app (ej. Spotify tarda unos segundos en aparecer): esperar a que se registre.
+        while not found and a["command"] in ("play", "play_pause") and waited < cfg.media_wait_s:
+            await asyncio.sleep(1.0)
+            waited += 1.0
+            found = await players()
+        if not found:
+            raise ToolError("no hay ningun reproductor multimedia activo")
+        target = choose(found, a.get("player"))
+        res = await sh(["playerctl", "-p", target, cmds[a["command"]]])
         if res.rc:
-            raise ToolError("no hay un reproductor al que enviarle la orden")
-        return f"Orden enviada: {a['command']}."
+            raise _fail(res, f"enviar la orden a {target}")
+        return f"Orden '{a['command']}' enviada a {target.split('.')[0]}."
 
     # -- volumen (PipeWire via wpctl) ----------------------------------------------------------------
     async def get_volume(a: dict[str, Any]) -> str:
@@ -148,30 +190,68 @@ def register_desktop(registry: ToolRegistry, cfg: DesktopConfig, runner: Runner 
         res = await sh(["kdotool", "getwindowname", wid])
         return res.out.strip() if not res.rc else ""
 
-    async def list_windows(a: dict[str, Any]) -> str:
-        res = await sh(["kdotool", "search", "--name", "."])
+    cache: dict[str, Any] = {"at": -1e9, "rows": []}
+
+    async def windows(fresh: bool = False) -> list[tuple[str, str]]:
+        """[(id, titulo)] de las ventanas. Los titulos se buscan de a uno (cada kdotool carga su script en KWin)."""
+        if not fresh and time.monotonic() - cache["at"] < 5:
+            return cache["rows"]
+        res = await sh(["kdotool", "search", "--name", "."])  # patron constante: nunca texto del modelo (se inserta en JS)
         if res.rc:
             raise _fail(res, "listar ventanas")
-        ids = [i.strip() for i in res.out.splitlines() if _WINID.match(i.strip())][:40]
-        titles = await asyncio.gather(*(win_title(i) for i in ids))
-        rows = [f"{i}  {_clean(ti, 120)}" for i, ti in zip(ids, titles) if ti]
-        return "\n".join(rows) or "No hay ventanas."
+        ids = [i.strip() for i in res.out.splitlines() if _WINID.match(i.strip())][:30]
+        rows = []
+        for i in ids:
+            title = await win_title(i)
+            if title:
+                rows.append((i, title))
+        if ids and not rows:
+            raise ToolError("kdotool devolvio ventanas pero ningun titulo (python scripts/kdotool_probe.py)")
+        cache.update(at=time.monotonic(), rows=rows)
+        return rows
 
-    def window_describe(a: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-        if not _WINID.match(a["id"]):
-            raise ToolError("id de ventana invalido (usa los de list_windows)")
+    async def list_windows(a: dict[str, Any]) -> str:
+        rows = await windows(fresh=True)
+        return "\n".join(f"{i}  {_clean(ti, 120)}" for i, ti in rows) or "No hay ventanas."
+
+    plan: dict[str, tuple[str, str]] = {}  # clave del pedido -> (id, titulo REAL mostrado al pedir confirmacion)
+    verbs = {"activate": "windowactivate", "minimize": "windowminimize", "close": "windowclose"}
+
+    def plan_key(a: dict[str, Any]) -> str:
+        return f"{a.get('id') or ''}|{(a.get('match') or '').casefold()}"
+
+    async def window_describe(a: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        if bool(a.get("id")) == bool(a.get("match")):
+            raise ToolError("indica exactamente uno: 'id' (de list_windows) o 'match' (parte del titulo)")
+        if a.get("id"):
+            if not _WINID.match(a["id"]):
+                raise ToolError("id de ventana invalido (usa los de list_windows)")
+            wid, real = a["id"], await win_title(a["id"])  # el titulo viene de KWin, no del modelo
+            if not real:
+                raise ToolError("esa ventana no existe (llama a list_windows de nuevo)")
+        else:
+            hits = [(i, ti) for i, ti in await windows(fresh=True) if a["match"].casefold() in ti.casefold()]
+            if not hits:
+                raise ToolError(f"ninguna ventana contiene '{_clean(a['match'], 40)}' (usa list_windows)")
+            if len(hits) > 1:
+                raise ToolError(f"{len(hits)} ventanas coinciden con '{_clean(a['match'], 40)}': "
+                                "usa list_windows y pasa el 'id' exacto")
+            wid, real = hits[0]
+        plan[plan_key(a)] = (wid, _clean(real, 80))
         verb = {"activate": "Traer al frente", "minimize": "Minimizar", "close": "Cerrar"}[a["action"]]
-        return f"{verb} la ventana '{_clean(a['title'], 80)}'", {"window": a["id"], "title": _clean(a["title"], 80),
-                                                                  "action": a["action"]}
+        return f"{verb} la ventana '{_clean(real, 80)}'", {"window": wid, "title": _clean(real, 80), "action": a["action"]}
 
     async def window_action(a: dict[str, Any]) -> str:
-        real = await win_title(a["id"])
+        chosen = plan.pop(plan_key(a), None)
+        if chosen is None:
+            raise ToolError("no hay una ventana autorizada para esta orden")
+        wid, shown = chosen
+        real = await win_title(wid)
         if not real:
             raise ToolError("esa ventana ya no existe")
-        if _clean(real, 80) != _clean(a["title"], 80):
-            raise ToolError("el titulo de esa ventana no coincide con el que se autorizo: no hice nada")
-        verb = {"activate": "windowactivate", "minimize": "windowminimize", "close": "windowclose"}[a["action"]]
-        res = await sh(["kdotool", verb, a["id"]])
+        if _clean(real, 80) != shown:
+            raise ToolError("la ventana cambio entre la confirmacion y la accion: no hice nada")
+        res = await sh(["kdotool", verbs[a["action"]], wid])
         if res.rc:
             raise _fail(res, "la accion sobre la ventana")
         return f"Hecho: {a['action']} '{_clean(real, 60)}'."
@@ -249,21 +329,26 @@ def register_desktop(registry: ToolRegistry, cfg: DesktopConfig, runner: Runner 
                                _obj({"title": S, "body": S}, ["title"]), notify, "desktop_notify"),
         "media_status": lambda: Tool("media_status", "Dice que se esta reproduciendo en los reproductores multimedia.",
                                      _obj({}), media_status, "desktop_read", untrusted=True),
-        "media_control": lambda: Tool("media_control", "Controla la reproduccion multimedia.",
-                                      _obj({"command": {"type": "string", "enum": list(cmds)}}, ["command"]),
-                                      media_control, "desktop_control",
-                                      describe=lambda a: (f"Multimedia: {a['command']}", {"command": a["command"]})),
+        "media_control": lambda: Tool(
+            "media_control", "Controla la reproduccion multimedia. Sin 'player' elige el que esta sonando o, si ninguno "
+            "suena, una app de musica antes que el navegador. 'player' = nombre del reproductor (ej. spotify, vlc). "
+            "Para empezar a sonar usa 'play'; 'play_pause' alterna.",
+            _obj({"command": {"type": "string", "enum": list(cmds)}, "player": S}, ["command"]),
+            media_control, "desktop_control", timeout_s=t * 3 + cfg.media_wait_s + 5,
+            describe=lambda a: (f"Multimedia: {a['command']}" + (f" en {a['player']}" if a.get("player") else ""),
+                                {"command": a["command"], "player": a.get("player")})),
         "get_volume": lambda: Tool("get_volume", "Lee el volumen de salida actual.", _obj({}), get_volume, "desktop_read"),
         "set_volume": lambda: Tool(
             "set_volume", f"Cambia el volumen (0-{cfg.max_volume_percent} %) y/o el silencio.",
             _obj({"percent": I, "muted": B}), set_volume, "desktop_control",
             describe=lambda a: ("Cambiar el volumen/silencio", {k: a[k] for k in ("percent", "muted") if k in a})),
         "list_windows": lambda: Tool("list_windows", "Lista las ventanas abiertas (id y titulo).", _obj({}),
-                                     list_windows, "desktop_read", untrusted=True, timeout_s=t * 6),
+                                     list_windows, "desktop_read", untrusted=True, timeout_s=t * 8),
         "window_action": lambda: Tool(
-            "window_action", "Trae al frente, minimiza o cierra una ventana. Usa el id y el titulo EXACTOS de list_windows.",
-            _obj({"id": S, "title": S, "action": {"type": "string", "enum": ["activate", "minimize", "close"]}},
-                 ["id", "title", "action"]), window_action, "window_control", describe=window_describe),
+            "window_action", "Trae al frente, minimiza o cierra una ventana. Indica 'match' (parte del titulo, ej. "
+            "'Konsole'; debe coincidir con UNA sola ventana) o el 'id' exacto de list_windows.",
+            _obj({"id": S, "match": S, "action": {"type": "string", "enum": ["activate", "minimize", "close"]}},
+                 ["action"]), window_action, "window_control", describe=window_describe, timeout_s=t * 8),
         "service_status": lambda: Tool("service_status", "Estado de un servicio systemd de usuario.",
                                        _obj({"unit": S}, ["unit"]), service_status, "service_read"),
         "service_control": lambda: Tool(

@@ -27,3 +27,6 @@ services:
 
 processes:
   max_listed: 25
+
+media:
+  wait_s: 6                     # tras abrir una app de musica, espera hasta tantos segundos a que aparezca para darle play
